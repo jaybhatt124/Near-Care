@@ -1,45 +1,81 @@
-═══════════════════════════════════════════════════
-  Smart Health Navigator — Setup & Run Guide
-═══════════════════════════════════════════════════
+======================================================
+  NearCares — MongoDB + Google Maps Version
+  HOW TO RUN
+======================================================
 
-STEP 1 — Install dependencies
-──────────────────────────────
-  pip install -r requirements.txt
+STEP 1 — GET A GOOGLE MAPS API KEY
+─────────────────────────────────────
+1. Go to https://console.cloud.google.com/
+2. Create a project (or use an existing one)
+3. Go to "APIs & Services" -> "Library" and enable:
+     - Places API
+     - Geocoding API
+4. Go to "Credentials" -> "Create Credentials" -> "API Key"
+5. Copy the key -> put in GOOGLE_MAPS_KEY
 
-STEP 2 — Configure environment variables
-─────────────────────────────────────────
-  Copy .env.example to .env:
-    Windows:  copy .env.example .env
-    Mac/Linux: cp .env.example .env
+   Tip: restrict the key to Places API + Geocoding API only
+        (Credentials -> your key -> "API restrictions")
 
-  Then open .env and set your values:
-    SECRET_KEY    → any long random string
-    DB_PASSWORD   → your MySQL root password
-    ADMIN_PASS    → your desired admin password
-    GOOGLE_MAPS_KEY → your API key from console.cloud.google.com (primary, Places + Geocoding APIs)
-    MAPPLS_API_KEY  → your REST API key from mappls.com/api (fallback)
+STEP 2 — INSTALL MONGODB
+──────────────────────────
+Option A: Local MongoDB (free, offline)
+  - Download from https://www.mongodb.com/try/download/community
+  - Install and start the service
+  - Default URI: mongodb://localhost:27017
 
-  ⚠️  NEVER share or commit your .env file!
+Option B: MongoDB Atlas (free cloud, no install)
+  - Go to https://cloud.mongodb.com
+  - Create a free cluster (M0 tier — always free)
+  - Click "Connect" -> get your connection string
+  - Example: mongodb+srv://user:pass@cluster0.abc.mongodb.net/
 
-STEP 3 — Set up MySQL database
-────────────────────────────────
-  Open MySQL Workbench and run: db_setup.sql
-  This creates the database and sample data.
+STEP 3 — CONFIGURE .env
+─────────────────────────
+Copy .env.example to .env and fill in:
 
-STEP 4 — Run the app
-──────────────────────
+  MONGO_URI=mongodb://localhost:27017        <- or Atlas URI
+  MONGO_DB=nearcares
+  GOOGLE_MAPS_KEY=your_google_maps_api_key
+  ADMIN_USER=admin
+  ADMIN_PASS=admin123
+
+STEP 4 — INSTALL PYTHON PACKAGES
+───────────────────────────────────
+  pip install flask python-dotenv requests "pymongo[srv]"
+
+  (No mysql-connector needed anymore)
+
+STEP 5 — RUN
+──────────────
   python app.py
 
-STEP 5 — Open in browser
-──────────────────────────
-  Website:  http://localhost:5000
-  Admin:    http://localhost:5000/admin
-            Login: use ADMIN_USER / ADMIN_PASS from .env
+  Open: http://localhost:5000
+  Admin: http://localhost:5000/admin
 
-═══════════════════════════════════════════════════
-  Get Google Maps API key (primary):
-  https://console.cloud.google.com/ → enable Places API + Geocoding API → Credentials
+======================================================
+WHAT CHANGED FROM OLD VERSION
+======================================================
 
-  Get Mappls API key (fallback):
-  https://www.mappls.com/api/ → Sign up → REST API Keys
-═══════════════════════════════════════════════════
+  MySQL              ->  MongoDB (pymongo)
+  mysql.connector    ->  pymongo
+  db_setup.sql       ->  Not needed (MongoDB is schema-less)
+  Mappls Nearby API  ->  Google Places Text Search API
+  Mappls Geocode     ->  Google Geocoding API
+  Mappls Map SDK     ->  "View on Google Maps" deep link (no JS SDK needed)
+  MAPPLS_REST_KEY / MAPPLS_MAP_KEY /
+  MAPPLS_CLIENT_ID / MAPPLS_CLIENT_SECRET  ->  GOOGLE_MAPS_KEY (one key covers both)
+
+  Search now also actively looks for CLINICS (not just hospitals) for
+  every specialty, and clinics are ranked ahead of plain/unclassified
+  hospital results (after admin-added hospitals and multispecialty
+  hospitals) so nearby clinics don't get buried in the results.
+
+======================================================
+GOOGLE MAPS API ENDPOINTS USED
+======================================================
+
+  Places (Text Search): https://maps.googleapis.com/maps/api/place/textsearch/json
+  Geocoding:             https://maps.googleapis.com/maps/api/geocode/json
+  Reverse Geocoding:     https://maps.googleapis.com/maps/api/geocode/json (latlng param)
+
+======================================================

@@ -39,7 +39,8 @@
     </button>
 
     <nav class="nav" id="mainNav" role="navigation" aria-label="Main navigation">
-      <a href="/"          class="nav-link {% if request.path in ['/', '/results'] %}active{% endif %}" {% if request.path == '/' %}aria-current="page"{% endif %}>Home</a>
+      <a href="/"          class="nav-link {% if request.path == '/' %}active{% endif %}" {% if request.path == '/' %}aria-current="page"{% endif %}>Home</a>
+      <a href="/hospitals" class="nav-link {% if request.path == '/hospitals' %}active{% endif %}" {% if request.path == '/hospitals' %}aria-current="page"{% endif %}>Hospitals</a>
       <a href="/about"     class="nav-link {% if request.path == '/about' %}active{% endif %}" {% if request.path == '/about' %}aria-current="page"{% endif %}>About</a>
       <a href="/tips"      class="nav-link {% if request.path == '/tips' %}active{% endif %}" {% if request.path == '/tips' %}aria-current="page"{% endif %}>Health Tips</a>
       <a href="/contact"   class="nav-link {% if request.path == '/contact' %}active{% endif %}" {% if request.path == '/contact' %}aria-current="page"{% endif %}>Contact</a>

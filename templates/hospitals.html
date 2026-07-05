@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Find Hospitals – NearCares{% endblock %}
+
+{% block head %}
+{% endblock %}
+
 {% block content %}
 
 <section class="hospitals-hero">
@@ -96,6 +100,18 @@
 <div style="padding:32px 0;">
   <div class="container">
     <div id="resultsHeader" style="margin-bottom:20px;"></div>
+
+    <!-- MAP BUTTON — opens Google Maps with all results -->
+    <div id="mapBtnContainer" style="display:none; margin-bottom:20px;">
+      <a id="viewOnMapBtn" href="#" target="_blank"
+         style="display:inline-flex; align-items:center; gap:8px;
+                background:#1a73e8; color:#fff; padding:10px 22px;
+                border-radius:10px; font-weight:700; font-size:0.9rem;
+                text-decoration:none; box-shadow:0 2px 8px rgba(26,115,232,0.3);">
+        🗺️ View All on Google Maps
+      </a>
+    </div>
+
     <div id="resultsContent">
       <div class="empty-state">
         <div class="empty-icon">🔍</div>
@@ -107,6 +123,7 @@
 </div>
 
 {% endblock %}
+
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/hospitals.js') }}"></script>
 {% endblock %}

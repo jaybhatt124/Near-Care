@@ -318,7 +318,7 @@ async function shnGeocode(searchType, svEncoded, dnEncoded) {
 
 function navigateTo(searchType, searchValue, displayName, lat, lng) {
   const radius = document.getElementById('radiusSelect')?.value || 5000;
-  let url = `/results?lat=${lat}&lng=${lng}&name=${encodeURIComponent(displayName)}&radius=${radius}`;
+  let url = `/hospitals?lat=${lat}&lng=${lng}&name=${encodeURIComponent(displayName)}&radius=${radius}`;
   if (searchType === 'illness') {
     url += `&illness=${encodeURIComponent(searchValue)}`;
   } else {

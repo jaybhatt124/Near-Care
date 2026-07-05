@@ -1,9 +1,7 @@
 /* ============================================================
-   Smart Health Navigator – Hospitals Page JS
-   - Reads lat/lng from URL params (passed by home page)
-   - "My Location" button re-fetches GPS
-   - "Change Location" modal lets user type address manually
-   - Auto-searches when params present
+   NearCares – Hospitals Page JS
+   Map: "View All on Google Maps" button (reliable, no SDK needed)
+   Click card / Directions → Google Maps navigation
    ============================================================ */
 
 let userLat = null, userLng = null;
@@ -15,6 +13,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   initSearchBar();
   initFromURL();
 });
+
+// ── Show "View All on Google Maps" button after results load ──
+function showMap(hospitals) {
+  const btn       = document.getElementById('viewOnMapBtn');
+  const container = document.getElementById('mapBtnContainer');
+  if (!btn || !container || !hospitals.length) return;
+
+  // Build a Google Maps search URL with all hospital names near user location
+  let url;
+  if (hospitals.length === 1) {
+    url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(hospitals[0].name)}&query_place_id=${hospitals[0].place_id || ''}`;
+  } else {
+    // Open Google Maps centered on user location searching for hospitals
+    const query = encodeURIComponent('hospitals near me');
+    url = userLat && userLng
+      ? `https://www.google.com/maps/search/hospitals/@${userLat},${userLng},14z`
+      : `https://www.google.com/maps/search/${query}`;
+  }
+
+  btn.href = url;
+  container.style.display = 'block';
+}
 
 // ── Load disease list ─────────────────────────────────────────
 async function loadDiseases() {
@@ -34,27 +54,22 @@ function initFromURL() {
   const name     = p.get('name') || p.get('q');
   const radius   = p.get('radius');
 
-  // Set radius selector
   if (radius) {
     const sel = document.getElementById('radiusSelect');
     if (sel) sel.value = radius;
   }
 
-  // Set location
   if (lat && lng) {
-    setLocation(lat, lng, null, true); // true = resolve address display
+    setLocation(lat, lng, null, true);
   } else {
-    // No location passed — try GPS silently
     setLocationText('📡 Detecting location…', '');
-    tryGPS(false); // silent — don't show modal on failure
+    tryGPS(false);
   }
 
-  // Trigger search based on params
   if (illness) {
     selectedIllness = illness;
     selectedBodyPart = null;
     markPill(illness);
-    // Search after location is ready
     waitForLocationThenSearch();
   } else if (bodyPart) {
     selectedBodyPart = bodyPart;
@@ -70,34 +85,32 @@ function initFromURL() {
   }
 }
 
-// Wait up to 8s for location then search
 function waitForLocationThenSearch() {
   const start = Date.now();
   const interval = setInterval(() => {
     if (userLat && userLng) {
       clearInterval(interval);
       searchHospitals();
-    } else if (Date.now() - start > 8000) {
+    } else if (Date.now() - start > 5000) {
+      // After 5s without location, stop waiting and prompt user
       clearInterval(interval);
-      // Location still not available — show prompt in results
+      setLocationText('⚠️ Could not detect location', '');
       showResults(`<div style="padding:24px; background:#eff6ff; border-radius:14px; color:#1e40af; font-weight:500; text-align:center;">
-        📍 Location needed to show hospitals.<br><br>
+        📍 Location could not be detected automatically.<br><br>
         <button onclick="refreshGPS()" style="background:#3b82f6;color:#fff;border:none;padding:10px 20px;border-radius:10px;cursor:pointer;font-weight:700;margin:4px;">
-          📍 Use My GPS
+          📍 Try GPS Again
         </button>
         <button onclick="showChangeLocationModal()" style="background:#f1f5f9;color:#374151;border:none;padding:10px 20px;border-radius:10px;cursor:pointer;font-weight:700;margin:4px;">
-          ✏️ Enter Location
+          ✏️ Enter Location Manually
         </button>
       </div>`);
     }
-  }, 200);
+  }, 300);
 }
 
-// ── Set location and update display ──────────────────────────
 function setLocation(lat, lng, accuracy, resolveAddress) {
   userLat = lat;
   userLng = lng;
-
   if (resolveAddress) {
     setLocationText('📡 Resolving address…', '');
     fetch('/api/reverse-geocode', {
@@ -121,12 +134,8 @@ function setLocationText(text, accuracy) {
   if (ac) ac.textContent = accuracy || '';
 }
 
-// ── GPS ───────────────────────────────────────────────────────
 function refreshGPS() {
-  if (!navigator.geolocation) {
-    showChangeLocationModal();
-    return;
-  }
+  if (!navigator.geolocation) { showChangeLocationModal(); return; }
   setLocationText('📡 Getting GPS location…', '');
   navigator.geolocation.getCurrentPosition(
     (pos) => {
@@ -134,7 +143,8 @@ function refreshGPS() {
       if (selectedIllness || selectedBodyPart) searchHospitals();
     },
     (err) => {
-      setLocationText('⚠️ GPS failed', '');
+      console.warn('GPS error:', err.code, err.message);
+      setLocationText('⚠️ GPS failed — enter location manually', '');
       showChangeLocationModal();
     },
     { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
@@ -143,22 +153,33 @@ function refreshGPS() {
 
 function tryGPS(showModalOnFail = true) {
   if (!navigator.geolocation) {
+    setLocationText('⚠️ GPS not supported', '');
     if (showModalOnFail) showChangeLocationModal();
     return;
   }
+
+  // Try high accuracy first, fall back to low accuracy if it fails
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       setLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, true);
     },
-    () => {
-      setLocationText('⚠️ Location unavailable', '');
-      if (showModalOnFail) showChangeLocationModal();
+    (err) => {
+      // High accuracy failed — retry with low accuracy (faster, works indoors)
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, true);
+        },
+        () => {
+          setLocationText('⚠️ Location unavailable', '');
+          if (showModalOnFail) showChangeLocationModal();
+        },
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+      );
     },
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
   );
 }
 
-// ── Change Location Modal ─────────────────────────────────────
 function showChangeLocationModal() {
   const modal = document.getElementById('changeLocModal');
   if (modal) {
@@ -174,25 +195,21 @@ function hideChangeLocationModal() {
   if (errEl) errEl.style.display = 'none';
 }
 
-// Close modal on backdrop click
 document.addEventListener('click', e => {
   const modal = document.getElementById('changeLocModal');
   if (modal && e.target === modal) hideChangeLocationModal();
 });
 
 async function submitChangeLocation() {
-  const input  = document.getElementById('changeLocInput');
-  const errEl  = document.getElementById('changeLocError');
-  const btn    = document.getElementById('changeLocBtn');
+  const input   = document.getElementById('changeLocInput');
+  const errEl   = document.getElementById('changeLocError');
+  const btn     = document.getElementById('changeLocBtn');
   const address = (input?.value || '').trim();
 
-  if (!address) {
-    input.style.borderColor = '#ef4444';
-    return;
-  }
+  if (!address) { input.style.borderColor = '#ef4444'; return; }
 
   btn.textContent = '🔄 Searching…';
-  btn.disabled = true;
+  btn.disabled    = true;
   if (errEl) errEl.style.display = 'none';
   input.style.borderColor = '';
 
@@ -210,7 +227,6 @@ async function submitChangeLocation() {
       setLocationText('📍 ' + (data.formatted_address || address), '(manual)');
       hideChangeLocationModal();
       if (input) input.value = '';
-      // Re-search with new location
       if (selectedIllness || selectedBodyPart) {
         searchHospitals();
       } else {
@@ -229,7 +245,7 @@ async function submitChangeLocation() {
     }
   } finally {
     btn.textContent = '🔍 Find Hospitals Here';
-    btn.disabled = false;
+    btn.disabled    = false;
   }
 }
 
@@ -237,7 +253,6 @@ function onRadiusChange() {
   if (userLat && userLng && (selectedIllness || selectedBodyPart)) searchHospitals();
 }
 
-// ── Filter pills ──────────────────────────────────────────────
 function selectIllness(key) {
   selectedIllness  = key;
   selectedBodyPart = null;
@@ -258,7 +273,6 @@ function markPill(key) {
   });
 }
 
-// ── Search bar ────────────────────────────────────────────────
 function initSearchBar() {
   const inp  = document.getElementById('diseaseSearch');
   const sugg = document.getElementById('searchSuggestions');
@@ -309,7 +323,6 @@ function triggerSearch() {
   }
 }
 
-// ── Core hospital search ──────────────────────────────────────
 async function searchHospitals() {
   if (!userLat || !userLng) {
     showResults(`<div style="padding:24px; background:#eff6ff; border-radius:14px; color:#1e40af; text-align:center;">
@@ -358,7 +371,7 @@ function renderResults(data) {
       <h2 style="font-size:1.3rem;font-weight:800;">
         Results for <span style="color:var(--primary);">${data.search_label}</span>
       </h2>
-      <span class="badge badge-primary">${data.total} hospitals within ${data.radius_km} km</span>
+      <span class="badge badge-primary">${data.total} found within ${data.radius_km} km</span>
     </div>`;
 
   if (!data.groups?.length) {
@@ -366,8 +379,15 @@ function renderResults(data) {
       <h3>No hospitals found</h3>
       <p>Try increasing the radius or <button onclick="showChangeLocationModal()" style="background:none;border:none;color:var(--primary);cursor:pointer;font-weight:700;padding:0;">change location</button></p>
     </div>`);
+    // hide map if no results
+    const mc = document.getElementById('mapContainer');
+    if (mc) mc.style.display = 'none';
     return;
   }
+
+  // Show map with all hospitals placed as markers
+  const allH = data.groups.flatMap(g => g.hospitals);
+  showMap(allH);
 
   showResults(data.groups.map(g => `
     <div style="margin-bottom:32px;">
@@ -381,10 +401,13 @@ function renderResults(data) {
 }
 
 function hospitalCard(h) {
+  // clicking card opens directions in Google Maps
+  const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${h.lat},${h.lng}`;
   const mapsQ   = encodeURIComponent(h.name + ' ' + (h.address || ''));
   const srcChip = h.source === 'database' ? `<span class="meta-chip source-db">✅ Verified</span>` : '';
   const rating  = h.display_rating > 0 ? `<span class="meta-chip">⭐ ${h.display_rating}</span>` : '';
-  return `<div class="hospital-card">
+
+  return `<div class="hospital-card" onclick="focusOnMap(${h.lat},${h.lng},'${h.name.replace(/'/g,"\\'")}','${(h.address||'').replace(/'/g,"\\'")}',${h.distance||0},'${h.phone||''}')">
     <div class="hospital-top">
       <div class="hospital-avatar">🏥</div>
       <div class="hospital-info">
@@ -399,12 +422,18 @@ function hospitalCard(h) {
       ${h.phone ? `<span class="meta-chip">📞 ${h.phone}</span>` : ''}
       <span class="meta-chip">${h.specialty_label || ''}</span>
     </div>
-    <div class="hospital-actions">
-      <a href="https://www.google.com/maps/search/?api=1&query=${mapsQ}" target="_blank" class="btn btn-primary btn-sm">🗺️ Directions</a>
+    <div class="hospital-actions" onclick="event.stopPropagation()">
+      <a href="${mapsUrl}" target="_blank" class="btn btn-primary btn-sm">🗺️ Directions</a>
       <a href="https://www.google.com/maps/search/?api=1&query=${mapsQ}" target="_blank" class="btn btn-secondary btn-sm">📌 Map</a>
       ${h.phone ? `<a href="tel:${h.phone}" class="btn btn-secondary btn-sm">📞 Call</a>` : ''}
     </div>
   </div>`;
+}
+
+// Click card → open Google Maps directions directly
+function focusOnMap(lat, lng, name, address, distance, phone) {
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+  window.open(url, '_blank');
 }
 
 function showResults(html) {
