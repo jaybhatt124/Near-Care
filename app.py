@@ -52,11 +52,19 @@ _mongo_db     = None
 _db_ok        = False
 
 _APP_DIR = os.path.abspath(os.path.dirname(__file__))
-DATA_DIR = os.path.join(_APP_DIR, 'data')
-import json
+import json, tempfile
+
+# On Vercel / AWS Lambda-style serverless, everything except /tmp is read-only.
+_IS_SERVERLESS = bool(os.environ.get('VERCEL') or os.environ.get('VERCEL_ENV')
+                      or os.environ.get('AWS_LAMBDA_FUNCTION_NAME'))
+DATA_DIR = os.path.join(tempfile.gettempdir(), 'nearcares_data') if _IS_SERVERLESS \
+    else os.path.join(_APP_DIR, 'data')
 
 def _ensure_data_dir():
-    os.makedirs(DATA_DIR, exist_ok=True)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except Exception as e:
+        print(f"⚠️  Could not create data dir ({DATA_DIR}): {e}")
 
 def _load_json(path):
     try:
@@ -78,7 +86,10 @@ def _save_json(path, data):
 CONTACTS_FILE  = os.path.join(DATA_DIR, 'contacts.json')
 HOSPITALS_FILE = os.path.join(DATA_DIR, 'hospitals.json')
 DISEASES_FILE  = os.path.join(DATA_DIR, 'diseases.json')
-os.makedirs(DATA_DIR, exist_ok=True)
+_ensure_data_dir()
+if _IS_SERVERLESS:
+    print(f"⚠️  Running on serverless — JSON fallback data in {DATA_DIR} will NOT persist between invocations. Fix MONGO_URI to use MongoDB instead.")
+
 
 
 def get_mongo_db():
