@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}NearCares – Find Hospitals Near You{% endblock %}
+{% block content %}
+
+<!-- HERO -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-content">
+      <div class="hero-left">
+        <div class="hero-badge">🏥 AI-Powered Health Navigation</div>
+        <h1 class="hero-title">Find the Right <span class="highlight">Specialist</span> Near You</h1>
+        <p class="hero-desc">Select your symptoms or body part to instantly discover nearby specialist hospitals grouped by specialty — powered by live location data.</p>
+        <div class="hero-actions">
+          <a href="#search-section" class="btn btn-primary btn-lg">🔍 Search Hospitals</a>
+          <a href="/tips" class="btn btn-secondary btn-lg">💡 Health Tips</a>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <div class="hero-stat-grid">
+          <div class="hero-stat-card">
+            <div class="stat-icon">🏥</div>
+            <div class="stat-num">500+</div>
+            <div class="stat-label">Hospitals Indexed</div>
+          </div>
+          <div class="hero-stat-card">
+            <div class="stat-icon">🩺</div>
+            <div class="stat-num">15+</div>
+            <div class="stat-label">Specialties</div>
+          </div>
+          <div class="hero-stat-card">
+            <div class="stat-icon">📍</div>
+            <div class="stat-num">GPS</div>
+            <div class="stat-label">Live Location</div>
+          </div>
+          <div class="hero-stat-card">
+            <div class="stat-icon">⚡</div>
+            <div class="stat-num">Fast</div>
+            <div class="stat-label">Instant Results</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SEARCH BAR -->
+<section class="search-section" id="search-section">
+  <div class="container">
+    <div class="search-bar">
+      <div class="search-input-wrapper">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="diseaseSearch" class="search-input" aria-label="Search by disease or condition"
+               placeholder="Search disease, symptom, or condition (e.g. diabetes, cancer)…"
+               autocomplete="off">
+        <div class="search-suggestions" id="searchSuggestions" style="display:none"></div>
+      </div>
+      <button class="btn btn-primary" id="searchBtn" onclick="triggerSearch()" aria-label="Search hospitals">Search</button>
+    </div>
+  </div>
+</section>
+
+<!-- LOCATION + RADIUS BAR -->
+<div class="location-bar">
+  <div class="container">
+    <div class="location-inner" style="justify-content:flex-end;">
+      <div class="radius-controls">
+        <label>Search Radius:</label>
+        <select class="radius-select" id="radiusSelect" aria-label="Search radius">
+          <option value="2000">2 km</option>
+          <option value="5000" selected>5 km</option>
+          <option value="10000">10 km</option>
+          <option value="20000">20 km</option>
+          <option value="50000">50 km</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BODY MAP + ILLNESS CARDS -->
+<section class="section" style="background:var(--white); padding-top:40px; padding-bottom:40px;">
+  <div class="container">
+    <div style="display:grid; grid-template-columns:1fr 2fr; gap:40px; align-items:start;">
+
+      <!-- Body Map -->
+      <div class="body-map-container" style="background:var(--white); border:1.5px solid var(--border); border-radius:24px; padding:24px 16px; text-align:center; position:relative; overflow:hidden;">
+        <div style="position:absolute; top:-40%; left:-40%; width:180%; height:180%; background:radial-gradient(circle at 50% 0%, rgba(59,130,246,0.04), transparent 60%); pointer-events:none;"></div>
+        <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:12px;">Body Map</div>
+        <div id="hoverChip" style="display:inline-flex; align-items:center; gap:6px; background:var(--gray-light,#f1f5f9); border:1.5px solid var(--border); border-radius:100px; padding:6px 18px; font-size:0.8rem; font-weight:600; color:var(--text-muted); margin-bottom:16px; min-width:180px; justify-content:center; transition:all 0.2s;">👆 Click any body part</div>
+
+        <svg class="body-map" viewBox="0 0 220 580" xmlns="http://www.w3.org/2000/svg" style="width:100%; max-width:190px; cursor:pointer; display:block; margin:0 auto;">
+          <style>
+            .body-part {
+              fill: transparent;
+              stroke: rgba(59,130,246,0.18);
+              stroke-width: 1.2;
+              cursor: pointer;
+              transition: fill 0.15s, stroke 0.15s;
+            }
+            .body-part:hover {
+              fill: rgba(59,130,246,0.22);
+              stroke: rgba(59,130,246,0.7);
+              stroke-width: 1.5;
+            }
+            .body-part.active {
+              fill: rgba(59,130,246,0.32);
+              stroke: #3b82f6;
+              stroke-width: 2;
+            }
+          </style>
+
+          <!-- Decorative outline (light theme: blue tint on white bg) -->
+          <g fill="rgba(59,130,246,0.06)" stroke="rgba(59,130,246,0.2)" stroke-width="1.2">
+            <ellipse cx="110" cy="52" rx="32" ry="38"/>
+            <rect x="98" y="87" width="24" height="22" rx="4"/>
+            <path d="M68 109 Q62 109 56 120 L44 200 Q42 220 50 230 L60 290 L160 290 L170 230 Q178 220 176 200 L164 120 Q158 109 152 109 Z"/>
+            <ellipse cx="52" cy="128" rx="18" ry="14"/>
+            <ellipse cx="168" cy="128" rx="18" ry="14"/>
+            <path d="M36 139 Q28 146 26 171 L28 210 Q30 220 38 222 L46 222 Q52 220 54 210 L56 180 Q56 156 48 139 Z"/>
+            <path d="M184 139 Q192 146 194 171 L192 210 Q190 220 182 222 L174 222 Q168 220 166 210 L164 180 Q164 156 172 139 Z"/>
+            <path d="M29 224 Q24 241 24 268 L26 295 Q28 305 34 307 L42 307 Q48 305 50 295 L50 268 Q50 243 48 224 Z"/>
+            <path d="M172 224 Q172 243 170 268 L170 295 Q172 305 178 307 L186 307 Q192 305 194 295 L196 268 Q196 241 191 224 Z"/>
+            <ellipse cx="36" cy="316" rx="11" ry="14"/>
+            <ellipse cx="184" cy="316" rx="11" ry="14"/>
+            <path d="M60 290 Q55 310 62 325 L90 335 L130 335 L158 325 Q165 310 160 290 Z"/>
+            <path d="M65 333 Q55 346 54 381 L54 416 Q56 430 66 434 L80 434 Q90 430 92 416 L90 381 Q88 349 82 333 Z"/>
+            <path d="M155 333 Q165 346 166 381 L166 416 Q164 430 154 434 L140 434 Q130 430 128 416 L130 381 Q132 349 138 333 Z"/>
+            <ellipse cx="73" cy="443" rx="16" ry="14"/>
+            <ellipse cx="147" cy="443" rx="16" ry="14"/>
+            <path d="M59 457 Q56 476 57 505 L58 530 Q60 540 67 542 L78 542 Q85 540 87 530 L88 505 Q89 476 88 457 Z"/>
+            <path d="M132 457 Q131 476 132 505 L133 530 Q135 540 142 542 L153 542 Q160 540 162 530 L163 505 Q164 476 161 457 Z"/>
+            <path d="M57 543 Q55 556 58 564 L92 566 Q98 564 97 556 L95 543 Z"/>
+            <path d="M133 543 Q131 556 133 564 L167 566 Q173 564 172 556 L170 543 Z"/>
+          </g>
+
+          <!-- Clickable transparent overlay paths -->
+          <ellipse class="body-part" data-part="head" data-name="Head" cx="110" cy="52" rx="34" ry="40"/>
+          <rect class="body-part" data-part="neck" data-name="Neck" x="93" y="86" width="34" height="26" rx="5"/>
+          <ellipse class="body-part" data-part="shoulders" data-name="Shoulders" cx="52" cy="125" rx="23" ry="18"/>
+          <ellipse class="body-part" data-part="shoulders" data-name="Shoulders" cx="168" cy="125" rx="23" ry="18"/>
+          <path class="body-part" data-part="chest" data-name="Chest" d="M74 109 L146 109 L158 168 L62 168 Z"/>
+          <path class="body-part" data-part="stomach" data-name="Stomach" d="M62 170 L158 170 L162 260 L58 260 Z"/>
+          <path class="body-part" data-part="arms" data-name="Arms" d="M24 135 Q14 162 18 218 L54 218 L56 176 L44 135 Z"/>
+          <path class="body-part" data-part="arms" data-name="Arms" d="M166 135 L176 135 Q206 162 202 218 L166 218 L164 176 Z"/>
+          <path class="body-part" data-part="back" data-name="Back" d="M62 262 L58 292 L162 292 L158 262 Z"/>
+          <ellipse class="body-part" data-part="knees" data-name="Knees" cx="73" cy="443" rx="18" ry="16"/>
+          <ellipse class="body-part" data-part="knees" data-name="Knees" cx="147" cy="443" rx="18" ry="16"/>
+          <path class="body-part" data-part="legs" data-name="Legs" d="M54 333 L92 333 L92 428 L54 428 Z"/>
+          <path class="body-part" data-part="legs" data-name="Legs" d="M128 333 L166 333 L166 428 L128 428 Z"/>
+          <path class="body-part" data-part="legs" data-name="Legs" d="M56 460 L90 460 L90 538 L56 538 Z"/>
+          <path class="body-part" data-part="legs" data-name="Legs" d="M130 460 L164 460 L164 538 L130 538 Z"/>
+          <path class="body-part" data-part="feet" data-name="Feet" d="M53 541 L100 541 L100 568 L53 568 Z"/>
+          <path class="body-part" data-part="feet" data-name="Feet" d="M120 541 L172 541 L172 568 L120 568 Z"/>
+        </svg>
+
+        <div style="margin-top:12px; font-size:0.75rem; color:var(--text-muted);">💡 Tap a body part to find nearby specialist hospitals</div>
+      </div>
+
+      <!-- Illness Cards -->
+      <div>
+        <h3 style="font-size:1rem; font-weight:800; margin-bottom:16px;">💊 Select Condition / Disease</h3>
+        <div class="illness-grid" id="illnessGrid" role="list" aria-label="Select a condition">
+          {% for key, illness in illnesses.items() %}
+          <div class="illness-card" role="listitem" data-key="{{ key }}" onclick="selectIllness('{{ key }}')">
+            <div class="illness-icon">{{ illness.icon }}</div>
+            <div class="illness-label">{{ illness.label }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/home.js') }}"></script>
+{% endblock %}

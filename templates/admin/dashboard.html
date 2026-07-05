@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard – NearCares</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="admin-layout">
+
+  <!-- Admin Header -->
+  <header class="admin-header">
+    <div class="admin-header-title">
+      <img src="/static/images/logo.jpeg" alt="NearCares" style="width:28px; height:28px; object-fit:cover; border-radius:6px; vertical-align:middle; margin-right:8px;">
+      NearCares &nbsp;—&nbsp; Admin Panel
+    </div>
+    <div class="admin-header-actions">
+      <a href="/" class="btn-admin-view">🌐 View Site</a>
+      <a href="/admin/logout" class="btn-admin-logout">🚪 Logout</a>
+    </div>
+  </header>
+
+  <div class="admin-body">
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ 'error' if category == 'error' else 'success' }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <!-- DB Status -->
+    <div class="admin-db-badge {{ 'connected' if db_ok else 'fallback' }}">
+      {% if db_ok %}
+        ✅ MySQL Connected
+      {% else %}
+        ⚠️ Using In-Memory Storage (MySQL not connected — data resets on restart)
+      {% endif %}
+    </div>
+
+    <!-- Stats -->
+    <div class="admin-stats-grid">
+      <div class="admin-stat-card">
+        <div class="admin-stat-icon blue">🏥</div>
+        <div>
+          <div class="admin-stat-num">{{ hospitals|length }}</div>
+          <div class="admin-stat-label">Hospitals in DB</div>
+        </div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-icon green">✉️</div>
+        <div>
+          <div class="admin-stat-num">{{ contacts|length }}</div>
+          <div class="admin-stat-label">Contact Messages</div>
+        </div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-icon amber">🔔</div>
+        <div>
+          <div class="admin-stat-num">{{ unread_count }}</div>
+          <div class="admin-stat-label">Unread Messages</div>
+        </div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-icon red">💊</div>
+        <div>
+          <div class="admin-stat-num">{{ custom_diseases|length }}</div>
+          <div class="admin-stat-label">Custom Diseases</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="admin-tabs">
+      <button class="admin-tab active" onclick="switchTab('hospitals')" id="tab-hospitals">🏥 Hospitals</button>
+      <button class="admin-tab" onclick="switchTab('contacts')"  id="tab-contacts">
+        ✉️ Messages
+        {% if unread_count > 0 %}<span class="badge badge-warning" style="margin-left:6px;">{{ unread_count }}</span>{% endif %}
+      </button>
+      <button class="admin-tab" onclick="switchTab('diseases')"  id="tab-diseases">💊 Custom Diseases</button>
+    </div>
+
+    <!-- ══════════════ HOSPITALS PANEL ══════════════ -->
+    <div class="admin-panel active" id="panel-hospitals">
+
+      <!-- Add Hospital Form -->
+      <div class="admin-section-card">
+        <div class="admin-section-title">➕ Add Hospital to Database</div>
+        <form method="POST" action="/admin/hospitals/add">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Hospital Name *</label>
+              <input type="text" name="name" class="form-control" placeholder="e.g. Apollo Hospital" required>
+            </div>
+            <div class="form-group">
+              <label>Phone</label>
+              <input type="text" name="phone" class="form-control" placeholder="+91 XXXXX XXXXX">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Address</label>
+            <input type="text" name="address" class="form-control" placeholder="Street address">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>City</label>
+              <input type="text" name="city" class="form-control" placeholder="e.g. Ahmedabad">
+            </div>
+            <div class="form-group">
+              <label>State</label>
+              <input type="text" name="state" class="form-control" placeholder="e.g. Gujarat">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Latitude</label>
+              <input type="number" name="lat" step="0.000001" class="form-control" placeholder="e.g. 23.0225"
+                     id="latInput">
+            </div>
+            <div class="form-group">
+              <label>Longitude</label>
+              <input type="number" name="lng" step="0.000001" class="form-control" placeholder="e.g. 72.5714"
+                     id="lngInput">
+            </div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:14px;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="getMyLocation()">
+              📍 Use My Location
+            </button>
+            <span style="font-size:12px; color:var(--text-muted);" id="geoStatus"></span>
+          </div>
+          <div class="form-group">
+            <label>Specialties (comma-separated)</label>
+            <input type="text" name="specialties" class="form-control"
+                   placeholder="e.g. cardiology, orthopedic, general">
+            <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:6px;" id="specChips">
+              {% for sp in all_specialties %}
+              <button type="button" class="badge badge-gray spec-chip" onclick="addSpecialty('{{ sp }}')" style="cursor:pointer;">
+                + {{ sp }}
+              </button>
+              {% endfor %}
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">🏥 Add Hospital</button>
+        </form>
+      </div>
+
+      <!-- Hospitals Table -->
+      <div class="admin-section-card">
+        <div class="admin-section-title">🗄️ Hospitals in Database ({{ hospitals|length }})</div>
+        {% if hospitals %}
+        <div class="admin-table-wrapper">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>City / State</th>
+                <th>Coordinates</th>
+                <th>Specialties</th>
+                <th>Phone</th>
+                <th>Added</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for h in hospitals %}
+              <tr>
+                <td><span class="badge badge-gray">{{ h.id }}</span></td>
+                <td><strong>{{ h.name }}</strong><br><small style="color:var(--text-muted);">{{ h.address or '—' }}</small></td>
+                <td>{{ h.city or '—' }}, {{ h.state or '—' }}</td>
+                <td style="font-size:12px; color:var(--text-muted); font-family:monospace;">
+                  {% if h.lat and h.lng %}{{ "%.4f"|format(h.lat|float) }}, {{ "%.4f"|format(h.lng|float) }}{% else %}—{% endif %}
+                </td>
+                <td>
+                  {% for sp in (h.specialties or '').split(',') %}
+                    {% if sp.strip() %}<span class="badge badge-primary" style="margin:2px;">{{ sp.strip() }}</span>{% endif %}
+                  {% endfor %}
+                </td>
+                <td>{{ h.phone or '—' }}</td>
+                <td style="font-size:12px; color:var(--text-muted);">{{ h.added_at }}</td>
+                <td>
+                  <form method="POST" action="/admin/hospitals/delete/{{ h.id }}"
+                        onsubmit="return confirm('Delete {{ h.name }}?')">
+                    <button type="submit" class="btn btn-danger btn-sm">🗑️ Delete</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding:32px 0;">
+          <div class="empty-icon">🏥</div>
+          <h3>No hospitals yet</h3>
+          <p>Add your first hospital using the form above</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- ══════════════ CONTACTS PANEL ══════════════ -->
+    <div class="admin-panel" id="panel-contacts">
+      <div class="admin-section-card">
+        <div class="admin-section-title">✉️ Contact Messages ({{ contacts|length }})</div>
+        {% if contacts %}
+        <div class="admin-table-wrapper">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Message</th>
+                <th>Received</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for c in contacts %}
+              <tr class="{{ 'msg-unread' if not c.is_read else '' }}">
+                <td><span class="badge badge-gray">{{ c.id }}</span></td>
+                <td><strong>{{ c.name }}</strong></td>
+                <td><a href="mailto:{{ c.email }}" style="color:var(--primary);">{{ c.email }}</a></td>
+                <td>
+                  <div class="msg-preview">{{ c.message[:80] }}{% if c.message|length > 80 %}…{% endif %}</div>
+                  <button class="btn btn-secondary btn-sm" style="margin-top:6px;"
+                          data-cid="{{ c.id }}"
+                          onclick="viewMessage({{ c.id }})">
+                    👁️ View
+                  </button>
+                </td>
+                <td style="font-size:12px; color:var(--text-muted);">{{ c.received_at }}</td>
+                <td>
+                  {% if c.is_read %}
+                    <span class="badge badge-success">✓ Read</span>
+                  {% else %}
+                    <span class="badge badge-warning">● New</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; justify-content:center;">
+                    {% if not c.is_read %}
+                    <form method="POST" action="/admin/contacts/read/{{ c.id }}" style="margin:0;">
+                      <button type="submit" class="btn btn-secondary btn-sm" title="Mark as read">✓ Read</button>
+                    </form>
+                    {% endif %}
+                    <button class="btn btn-sm"
+                            style="background:#dbeafe; color:#1d4ed8; border:none; cursor:pointer; font-weight:600;"
+                            title="Compose reply"
+                            onclick="composeReply('{{ c.email }}')">
+                      ✉️ Reply
+                    </button>
+                    <form method="POST" action="/admin/contacts/delete/{{ c.id }}"
+                          onsubmit="return confirm('Delete this message?')" style="margin:0;">
+                      <button type="submit" class="btn btn-danger btn-sm" title="Delete message"
+                              style="display:flex; align-items:center; justify-content:center; min-width:36px;">
+                        🗑️
+                      </button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding:32px 0;">
+          <div class="empty-icon">✉️</div>
+          <h3>No messages yet</h3>
+          <p>Contact form submissions will appear here</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- ══════════════ DISEASES PANEL ══════════════ -->
+    <div class="admin-panel" id="panel-diseases">
+      <div class="admin-section-card">
+        <div class="admin-section-title">➕ Add Custom Disease / Condition</div>
+        <form method="POST" action="/admin/diseases/add">
+          <div class="form-row-3">
+            <div class="form-group">
+              <label>Disease / Condition Name *</label>
+              <input type="text" name="name" class="form-control" placeholder="e.g. Dengue Fever" required>
+            </div>
+            <div class="form-group">
+              <label>Specialties (comma-separated)</label>
+              <input type="text" name="specialties" class="form-control" placeholder="e.g. general, nephrology">
+            </div>
+            <div class="form-group">
+              <label>Icon (emoji)</label>
+              <input type="text" name="icon" class="form-control" placeholder="💊" maxlength="4">
+            </div>
+          </div>
+          <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
+            Available specialties: orthopedic, physio, neurology, ent, ophthalmology, cardiology, pulmonology, gastro, liver, oncology, nephrology, endocrinology, dermatology, psychiatry, general
+          </p>
+          <button type="submit" class="btn btn-primary">💊 Add Disease</button>
+        </form>
+      </div>
+
+      <div class="admin-section-card">
+        <div class="admin-section-title">📋 Custom Diseases ({{ custom_diseases|length }})</div>
+        {% if custom_diseases %}
+        <div class="admin-table-wrapper">
+          <table class="admin-table">
+            <thead>
+              <tr><th>#</th><th>Icon</th><th>Name</th><th>Specialties</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+              {% for d in custom_diseases %}
+              <tr>
+                <td><span class="badge badge-gray">{{ d.id }}</span></td>
+                <td style="font-size:1.4rem;">{{ d.icon }}</td>
+                <td><strong>{{ d.name }}</strong></td>
+                <td>
+                  {% for sp in (d.specialties or '').split(',') %}
+                    {% if sp.strip() %}<span class="badge badge-primary" style="margin:2px;">{{ sp.strip() }}</span>{% endif %}
+                  {% endfor %}
+                </td>
+                <td>
+                  <form method="POST" action="/admin/diseases/delete/{{ d.id }}"
+                        onsubmit="return confirm('Remove {{ d.name }}?')">
+                    <button type="submit" class="btn btn-danger btn-sm">🗑️ Remove</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding:32px 0;">
+          <div class="empty-icon">💊</div>
+          <h3>No custom diseases yet</h3>
+          <p>Add diseases that aren't in the built-in list</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div><!-- /admin-body -->
+</div><!-- /admin-layout -->
+
+<!-- Message Modal -->
+<div id="msgModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:9999; align-items:center; justify-content:center; padding:1rem;">
+  <div style="background:var(--white); border-radius:var(--radius-lg); padding:32px; max-width:580px; width:100%; max-height:85vh; overflow-y:auto; box-shadow:0 24px 60px rgba(0,0,0,0.25);">
+    <!-- Header -->
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+      <h3 id="modalTitle" style="font-size:1.15rem; font-weight:800; margin:0;"></h3>
+      <button onclick="closeModal()" style="background:none; border:none; font-size:1.4rem; cursor:pointer; color:#9ca3af; line-height:1; padding:4px;">✕</button>
+    </div>
+    <!-- Sender info -->
+    <div id="modalMeta" style="background:#f8faff; border:1px solid #e0e7ff; border-radius:10px; padding:12px 16px; margin-bottom:18px; font-size:0.85rem; color:#4b5563;"></div>
+    <input type="hidden" id="modalEmail" value="">
+    <!-- Message body -->
+    <div style="background:#f9fafb; border-radius:10px; padding:16px; margin-bottom:20px;">
+      <p id="modalBody" style="color:#374151; line-height:1.8; white-space:pre-wrap; margin:0; font-size:0.95rem;"></p>
+    </div>
+    <!-- Actions -->
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button class="btn btn-secondary" onclick="closeModal()">✕ Close</button>
+      <button id="modalReplyBtn" class="btn btn-primary" onclick="composeReply(document.getElementById('modalEmail').value)">✉️ Compose Reply</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Tabs
+function switchTab(name) {
+  document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  history.replaceState(null, '', '#' + name);
+}
+
+// Auto-open tab from hash
+(function() {
+  const hash = location.hash.replace('#','');
+  if (['hospitals','contacts','diseases'].includes(hash)) switchTab(hash);
+})();
+
+// Geo fill
+function getMyLocation() {
+  const status = document.getElementById('geoStatus');
+  status.textContent = '📡 Locating…';
+  if (!navigator.geolocation) { status.textContent = '❌ Not supported'; return; }
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      document.getElementById('latInput').value = pos.coords.latitude.toFixed(6);
+      document.getElementById('lngInput').value = pos.coords.longitude.toFixed(6);
+      status.textContent = `✅ Accuracy: ±${Math.round(pos.coords.accuracy)}m`;
+    },
+    err => { status.textContent = '❌ ' + err.message; },
+    { enableHighAccuracy: true, timeout: 15000 }
+  );
+}
+
+// Specialty chip
+function addSpecialty(sp) {
+  const inp = document.querySelector('input[name="specialties"]');
+  const current = inp.value.split(',').map(s=>s.trim()).filter(Boolean);
+  if (!current.includes(sp)) { current.push(sp); inp.value = current.join(', '); }
+}
+
+// ── Message modal ──────────────────────────────────────────────
+// viewMessage: fetch contact JSON, show in modal
+async function viewMessage(cid) {
+  try {
+    const res  = await fetch('/admin/contacts/view/' + cid);
+    const data = await res.json();
+    if (data.error) { alert('Message not found.'); return; }
+
+    document.getElementById('modalTitle').textContent = 'Message from ' + data.name;
+    document.getElementById('modalMeta').innerHTML =
+      '<strong>From:</strong> ' + escHtml(data.name) +
+      ' &nbsp;|&nbsp; <strong>Email:</strong> ' + escHtml(data.email) +
+      ' &nbsp;|&nbsp; <small style="color:#9ca3af;">' + escHtml(data.received_at||'') + '</small>';
+    document.getElementById('modalBody').textContent = data.message;
+    // Store email for compose reply button
+    document.getElementById('modalEmail').value = data.email;
+
+    document.getElementById('msgModal').style.display = 'flex';
+  } catch(e) {
+    alert('Error loading message: ' + e.message);
+  }
+}
+
+// composeReply: open Gmail compose with To: pre-filled
+function composeReply(email) {
+  if (!email || email.trim() === '') {
+    alert('No email address found.');
+    return;
+  }
+  const to = email.trim();
+  // Use Gmail compose URL — works with any logged-in Gmail account
+  const gmailUrl = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to);
+  window.open(gmailUrl, '_blank');
+}
+
+function closeModal() {
+  document.getElementById('msgModal').style.display = 'none';
+}
+
+function escHtml(s) {
+  return String(s||'')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+document.getElementById('msgModal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Hospital Results – NearCares{% endblock %}
+{% block content %}
+
+<section class="hospitals-hero">
+  <div class="container">
+    <h1 style="font-size:1.6rem; font-weight:800; margin-bottom:6px;">🏥 Nearby Hospitals</h1>
+    <p style="color:var(--text-muted); margin-bottom:20px;" id="resultsSubtitle">Finding hospitals near you…</p>
+
+    <!-- Search bar -->
+    <div class="search-bar" style="max-width:700px; margin-bottom:18px;">
+      <div class="search-input-wrapper">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="diseaseSearch" class="search-input"
+               placeholder="Search another condition…" autocomplete="off"
+               aria-label="Search by disease or condition">
+        <div class="search-suggestions" id="searchSuggestions" style="display:none"></div>
+      </div>
+      <button class="btn btn-primary" onclick="triggerSearch()">Search</button>
+    </div>
+
+    <!-- Location bar -->
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <div class="location-display" style="flex:1; min-width:160px;">
+        <span class="location-dot" id="locationDot"></span>
+        <span id="locationText">Loading location…</span>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="refreshGPS()" aria-label="Use GPS location">📍 My Location</button>
+      <button class="btn btn-secondary btn-sm" onclick="showChangeLocationModal()" aria-label="Change location manually">✏️ Change</button>
+      <select class="radius-select" id="radiusSelect" onchange="onRadiusChange()" aria-label="Search radius">
+        <option value="2000">2 km</option>
+        <option value="5000" selected>5 km</option>
+        <option value="10000">10 km</option>
+        <option value="20000">20 km</option>
+        <option value="50000">50 km</option>
+      </select>
+    </div>
+  </div>
+</section>
+
+<!-- Change Location Modal -->
+<div id="changeLocModal" style="display:none; position:fixed; inset:0; z-index:9999;
+     background:rgba(0,0,0,0.5); backdrop-filter:blur(6px);
+     align-items:flex-end; justify-content:center; padding:0;"
+     role="dialog" aria-modal="true" aria-label="Change location">
+  <div style="background:#fff; border-radius:24px 24px 0 0; padding:28px 24px 36px;
+              width:100%; max-width:480px; box-shadow:0 -8px 40px rgba(0,0,0,0.2);">
+    <div style="width:40px;height:4px;background:#e5e7eb;border-radius:4px;margin:0 auto 20px;"></div>
+    <h3 style="font-size:1.1rem; font-weight:800; margin:0 0 6px;">📍 Change Location</h3>
+    <p style="font-size:0.83rem; color:#6b7280; margin:0 0 16px;">Enter your city, area, or pincode</p>
+    <input id="changeLocInput" type="text" placeholder="e.g. Surat, Gujarat or 395001"
+           style="width:100%; padding:14px 16px; border:2px solid #e5e7eb; border-radius:12px;
+                  font-size:0.95rem; outline:none; box-sizing:border-box; margin-bottom:10px;"
+           aria-label="Enter location"
+           onkeydown="if(event.key==='Enter') submitChangeLocation()"/>
+    <div id="changeLocError" style="display:none; color:#ef4444; font-size:0.82rem; margin-bottom:10px;" role="alert"></div>
+    <button id="changeLocBtn" onclick="submitChangeLocation()"
+      style="width:100%; padding:15px; margin-bottom:10px;
+             background:linear-gradient(135deg,#2563eb,#06b6d4);
+             border:none; border-radius:14px; color:#fff; font-size:1rem; font-weight:700; cursor:pointer;">
+      🔍 Search Here
+    </button>
+    <button onclick="hideChangeLocationModal()"
+      style="width:100%; padding:12px; background:#f8fafc; border:2px solid #e5e7eb;
+             border-radius:12px; color:#374151; font-size:0.9rem; cursor:pointer; font-weight:600;">
+      Cancel
+    </button>
+  </div>
+</div>
+
+<!-- Quick filter pills -->
+<div style="background:var(--white); border-bottom:1px solid var(--border); padding:12px 0; overflow-x:auto;">
+  <div class="container">
+    <div style="display:flex; gap:8px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px;">
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="fever"        onclick="selectIllness('fever')">🌡️ Fever</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="heart_disease" onclick="selectIllness('heart_disease')">❤️ Heart</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="diabetes"     onclick="selectIllness('diabetes')">💊 Diabetes</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="cancer"       onclick="selectIllness('cancer')">🎗️ Cancer</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="kidney"       onclick="selectIllness('kidney')">🫘 Kidney</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="eye"          onclick="selectIllness('eye')">👁️ Eye</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="asthma"       onclick="selectIllness('asthma')">🫁 Asthma</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="skin"         onclick="selectIllness('skin')">🧴 Skin</button>
+      <button class="btn btn-secondary btn-sm filter-pill"                         onclick="selectBodyPart('head')">🧠 Head</button>
+      <button class="btn btn-secondary btn-sm filter-pill"                         onclick="selectBodyPart('back')">🦴 Back</button>
+    </div>
+  </div>
+</div>
+
+<!-- Results -->
+<div style="padding:28px 0;">
+  <div class="container">
+    <div id="resultsHeader" style="margin-bottom:20px;"></div>
+    <div id="resultsContent">
+      <div class="loading-overlay">
+        <div class="spinner"></div>
+        <p style="color:var(--text-muted); font-weight:600;">Finding hospitals near you…</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  const GOOGLE_MAPS_KEY = "{{ google_maps_key }}";
+</script>
+<script src="{{ url_for('static', filename='js/results.js') }}"></script>
+{% endblock %}

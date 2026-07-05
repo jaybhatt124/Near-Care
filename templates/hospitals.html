@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Find Hospitals – NearCares{% endblock %}
+{% block content %}
+
+<section class="hospitals-hero">
+  <div class="container">
+    <h1>🏥 Find Hospitals Near You</h1>
+    <p style="color:var(--text-muted); margin-bottom:20px;">Search by condition or body part to find specialist hospitals nearby</p>
+
+    <!-- Search bar -->
+    <div class="search-bar" style="max-width:700px; margin-bottom:18px;">
+      <div class="search-input-wrapper">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="diseaseSearch" class="search-input" aria-label="Search by disease or condition"
+               placeholder="Search disease or condition…" autocomplete="off">
+        <div class="search-suggestions" id="searchSuggestions" style="display:none"></div>
+      </div>
+      <button class="btn btn-primary" onclick="triggerSearch()">Search</button>
+    </div>
+
+    <!-- Location bar -->
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <div class="location-display" style="flex:1; min-width:180px;">
+        <span class="location-dot" id="locationDot"></span>
+        <span id="locationText">Loading location…</span>
+        <span class="location-accuracy" id="accuracyText"></span>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="refreshGPS()" title="Get GPS location">
+        📍 My Location
+      </button>
+      <button class="btn btn-secondary btn-sm" onclick="showChangeLocationModal()" title="Enter location manually">
+        ✏️ Change Location
+      </button>
+      <select class="radius-select" id="radiusSelect" aria-label="Search radius" onchange="onRadiusChange()">
+        <option value="2000">2 km</option>
+        <option value="5000" selected>5 km</option>
+        <option value="10000">10 km</option>
+        <option value="20000">20 km</option>
+        <option value="50000">50 km</option>
+      </select>
+    </div>
+  </div>
+</section>
+
+<!-- CHANGE LOCATION MODAL -->
+<div id="changeLocModal" style="display:none; position:fixed; inset:0; z-index:9999;
+     background:rgba(0,0,0,0.5); backdrop-filter:blur(6px);
+     align-items:center; justify-content:center; padding:1rem;">
+  <div style="background:#fff; border-radius:20px; padding:2rem; max-width:440px; width:100%;
+              box-shadow:0 24px 60px rgba(0,0,0,0.25);">
+    <h3 style="font-size:1.1rem; font-weight:800; margin:0 0 6px;">📍 Change Your Location</h3>
+    <p style="color:#6b7280; font-size:0.85rem; margin:0 0 18px;">Enter a city, area, or pincode to search hospitals there</p>
+
+    <input id="changeLocInput" type="text" placeholder="e.g. Surat, Gujarat  or  395001"
+      style="width:100%; padding:12px 16px; border:2px solid #e5e7eb; border-radius:12px;
+             font-size:0.95rem; outline:none; box-sizing:border-box; margin-bottom:10px;"
+      onkeydown="if(event.key==='Enter') submitChangeLocation()"/>
+
+    <div id="changeLocError" style="display:none; color:#ef4444; font-size:0.83rem; margin-bottom:10px;"></div>
+
+    <div style="display:flex; gap:10px;">
+      <button onclick="hideChangeLocationModal()"
+        style="flex:1; padding:12px; background:#f1f5f9; border:none; border-radius:12px;
+               color:#6b7280; cursor:pointer; font-weight:600; font-size:0.875rem;">
+        Cancel
+      </button>
+      <button id="changeLocBtn" onclick="submitChangeLocation()"
+        style="flex:2; padding:12px; background:linear-gradient(135deg,#3b82f6,#06b6d4);
+               border:none; border-radius:12px; color:#fff; cursor:pointer;
+               font-weight:700; font-size:0.875rem;">
+        🔍 Find Hospitals Here
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Quick filter pills -->
+<div style="background:var(--white); border-bottom:1px solid var(--border); padding:14px 0; overflow-x:auto;">
+  <div class="container">
+    <div style="display:flex; gap:10px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px;">
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="fever"        onclick="selectIllness('fever')">🌡️ Fever</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="heart_disease" onclick="selectIllness('heart_disease')">❤️ Heart</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="diabetes"     onclick="selectIllness('diabetes')">💊 Diabetes</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="cancer"       onclick="selectIllness('cancer')">🎗️ Cancer</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="kidney"       onclick="selectIllness('kidney')">🫘 Kidney</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="eye"          onclick="selectIllness('eye')">👁️ Eye</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="asthma"       onclick="selectIllness('asthma')">🫁 Asthma</button>
+      <button class="btn btn-secondary btn-sm filter-pill" data-key="skin"         onclick="selectIllness('skin')">🧴 Skin</button>
+      <button class="btn btn-secondary btn-sm filter-pill"                         onclick="selectBodyPart('head')">🧠 Head</button>
+      <button class="btn btn-secondary btn-sm filter-pill"                         onclick="selectBodyPart('back')">🦴 Back</button>
+    </div>
+  </div>
+</div>
+
+<!-- Results -->
+<div style="padding:32px 0;">
+  <div class="container">
+    <div id="resultsHeader" style="margin-bottom:20px;"></div>
+    <div id="resultsContent">
+      <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <h3>Search for hospitals</h3>
+        <p>Select a condition above or click a quick filter</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/hospitals.js') }}"></script>
+{% endblock %}

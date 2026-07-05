@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="NearCares — Find the right specialist hospital near you instantly using GPS and body map navigation.">
+  <title>{% block title %}NearCares{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='images/logo.jpeg') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
+<header class="header" role="banner">
+  <div class="container">
+    <a href="/" class="logo" aria-label="NearCares Home">
+      <div class="logo-icon" style="background:none; padding:0; overflow:hidden;">
+        <img src="{{ url_for('static', filename='images/logo.jpeg') }}"
+             alt="NearCares Logo"
+             width="44" height="44"
+             style="width:44px; height:44px; object-fit:cover; border-radius:10px; display:block;">
+      </div>
+      <div class="logo-text">
+        <div class="logo-title" aria-hidden="true">Near<span>Cares</span></div>
+        <div class="logo-subtitle">AI-Powered Healthcare Guidance</div>
+      </div>
+    </a>
+
+    <!-- Hamburger button (mobile only) -->
+    <button class="hamburger" id="hamburgerBtn"
+            aria-label="Open navigation menu"
+            aria-expanded="false"
+            aria-controls="mainNav">
+      <span class="ham-line"></span>
+      <span class="ham-line"></span>
+      <span class="ham-line"></span>
+    </button>
+
+    <nav class="nav" id="mainNav" role="navigation" aria-label="Main navigation">
+      <a href="/"          class="nav-link {% if request.path in ['/', '/results'] %}active{% endif %}" {% if request.path == '/' %}aria-current="page"{% endif %}>Home</a>
+      <a href="/about"     class="nav-link {% if request.path == '/about' %}active{% endif %}" {% if request.path == '/about' %}aria-current="page"{% endif %}>About</a>
+      <a href="/tips"      class="nav-link {% if request.path == '/tips' %}active{% endif %}" {% if request.path == '/tips' %}aria-current="page"{% endif %}>Health Tips</a>
+      <a href="/contact"   class="nav-link {% if request.path == '/contact' %}active{% endif %}" {% if request.path == '/contact' %}aria-current="page"{% endif %}>Contact</a>
+    </nav>
+  </div>
+
+  <!-- Mobile nav overlay -->
+  <div class="nav-overlay" id="navOverlay" aria-hidden="true"></div>
+</header>
+
+<main id="main-content">
+{% block content %}{% endblock %}
+</main>
+
+<footer class="footer" role="contentinfo">
+  <div class="container">
+    <div class="footer-content">
+      <div class="footer-section">
+        <div class="footer-logo-title" style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+          <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="NearCares"
+               width="36" height="36"
+               style="width:36px; height:36px; object-fit:cover; border-radius:8px;">
+          Near<span>Cares</span>
+        </div>
+        <p class="footer-desc">Making healthcare navigation accessible to everyone. Find the right specialist near you, instantly.</p>
+      </div>
+      <div class="footer-section">
+        <h4>Quick Links</h4>
+        <nav aria-label="Footer navigation">
+          <a href="/">Home</a>
+          <a href="/hospitals">Find Hospitals</a>
+          <a href="/about">About Us</a>
+          <a href="/tips">Health Tips</a>
+          <a href="/contact">Contact</a>
+        </nav>
+      </div>
+      <div class="footer-section">
+        <h4>Disclaimer</h4>
+        <p>This app is for educational and navigational purposes only. Always consult a qualified medical professional for diagnosis and treatment.</p>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>© 2026 NearCares. All rights reserved. &nbsp;·&nbsp; <a href="/admin" style="color:inherit; opacity:0.4; font-size:0.75rem; text-decoration:none;" aria-label="Admin panel">⚙</a></p>
+    </div>
+  </div>
+</footer>
+
+{% block scripts %}{% endblock %}
+
+<script>
+// ── Hamburger menu ───────────────────────────────────────────
+const btn     = document.getElementById('hamburgerBtn');
+const nav     = document.getElementById('mainNav');
+const overlay = document.getElementById('navOverlay');
+
+function openMenu() {
+  nav.classList.add('nav-open');
+  overlay.classList.add('overlay-show');
+  btn.setAttribute('aria-expanded', 'true');
+  btn.setAttribute('aria-label', 'Close navigation menu');
+  btn.classList.add('ham-open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeMenu() {
+  nav.classList.remove('nav-open');
+  overlay.classList.remove('overlay-show');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.setAttribute('aria-label', 'Open navigation menu');
+  btn.classList.remove('ham-open');
+  document.body.style.overflow = '';
+}
+
+btn.addEventListener('click', () => {
+  nav.classList.contains('nav-open') ? closeMenu() : openMenu();
+});
+
+overlay.addEventListener('click', closeMenu);
+
+// Close on nav link click (mobile)
+nav.querySelectorAll('.nav-link').forEach(link => {
+  link.addEventListener('click', closeMenu);
+});
+
+// Close on Escape key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && nav.classList.contains('nav-open')) closeMenu();
+});
+</script>
+</body>
+</html>

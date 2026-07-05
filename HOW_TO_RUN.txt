@@ -1,0 +1,45 @@
+═══════════════════════════════════════════════════
+  Smart Health Navigator — Setup & Run Guide
+═══════════════════════════════════════════════════
+
+STEP 1 — Install dependencies
+──────────────────────────────
+  pip install -r requirements.txt
+
+STEP 2 — Configure environment variables
+─────────────────────────────────────────
+  Copy .env.example to .env:
+    Windows:  copy .env.example .env
+    Mac/Linux: cp .env.example .env
+
+  Then open .env and set your values:
+    SECRET_KEY    → any long random string
+    DB_PASSWORD   → your MySQL root password
+    ADMIN_PASS    → your desired admin password
+    GOOGLE_MAPS_KEY → your API key from console.cloud.google.com (primary, Places + Geocoding APIs)
+    MAPPLS_API_KEY  → your REST API key from mappls.com/api (fallback)
+
+  ⚠️  NEVER share or commit your .env file!
+
+STEP 3 — Set up MySQL database
+────────────────────────────────
+  Open MySQL Workbench and run: db_setup.sql
+  This creates the database and sample data.
+
+STEP 4 — Run the app
+──────────────────────
+  python app.py
+
+STEP 5 — Open in browser
+──────────────────────────
+  Website:  http://localhost:5000
+  Admin:    http://localhost:5000/admin
+            Login: use ADMIN_USER / ADMIN_PASS from .env
+
+═══════════════════════════════════════════════════
+  Get Google Maps API key (primary):
+  https://console.cloud.google.com/ → enable Places API + Geocoding API → Credentials
+
+  Get Mappls API key (fallback):
+  https://www.mappls.com/api/ → Sign up → REST API Keys
+═══════════════════════════════════════════════════

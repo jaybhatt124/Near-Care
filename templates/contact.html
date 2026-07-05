@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Contact Us – NearCares{% endblock %}
+{% block content %}
+
+<section class="page-hero">
+  <div class="container">
+    <h1>Contact Us</h1>
+    <p>Have questions, feedback, or want to report an issue? We'd love to hear from you.</p>
+  </div>
+</section>
+
+<section class="section content-section">
+  <div class="container">
+    <div class="contact-container">
+
+      <div class="contact-info">
+        <h2>Get In Touch</h2>
+        <div class="contact-item">
+          <div class="contact-icon">📍</div>
+          <div>
+            <h4>Location</h4>
+            <p>Gujarat, India</p>
+          </div>
+        </div>
+        <div class="contact-item">
+          <div class="contact-icon">⏰</div>
+          <div>
+            <h4>Response Time</h4>
+            <p>We typically respond within 24–48 hours</p>
+          </div>
+        </div>
+        <div class="contact-item">
+          <div class="contact-icon">🚨</div>
+          <div>
+            <h4>Medical Emergency?</h4>
+            <p>Call <strong>112</strong> (India emergency)<br>or go to the nearest hospital immediately.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="contact-form-wrapper">
+        <h2>Send Us a Message</h2>
+        <div id="successMsg" class="success-msg" role="status" aria-live="polite" style="display:none"></div>
+        <div id="errorMsg"   class="error-msg"   role="alert"  aria-live="assertive" style="display:none"></div>
+        <form id="contactForm">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="name">Name *</label>
+              <input type="text" id="name" class="form-control" aria-required="true" placeholder="Your full name" required>
+            </div>
+            <div class="form-group">
+              <label for="email">Email *</label>
+              <input type="email" id="email" class="form-control" aria-required="true" placeholder="your@email.com" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="subject">Subject</label>
+            <input type="text" id="subject" class="form-control" placeholder="What is this about?">
+          </div>
+          <div class="form-group">
+            <label for="message">Message *</label>
+            <textarea id="message" class="form-control" rows="6" aria-required="true"
+                      placeholder="Tell us your query, suggestion, or feedback…" required></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary">✉️ Send Message</button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/contact.js') }}"></script>{% endblock %}
