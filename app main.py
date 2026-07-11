@@ -23,7 +23,13 @@ except ImportError:
 try:
     from pymongo import MongoClient, DESCENDING
     MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017')
-    _client   = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
+    try:
+        import certifi
+        _tls_kwargs = {'tls': True, 'tlsCAFile': certifi.where()}
+    except ImportError:
+        print("⚠️  certifi not installed (pip install certifi) — TLS handshake may fail on Windows")
+        _tls_kwargs = {}
+    _client   = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000, **_tls_kwargs)
     _client.server_info()          # test connection
     _db       = _client[os.environ.get('MONGO_DB', 'nearcares')]
     hospitals_col  = _db['hospitals']
@@ -187,6 +193,30 @@ def db_delete_disease(did):
 # GOOGLE MAPS API
 # ══════════════════════════════════════════════════════════════════════════
 
+# Google place `types` that mean "this is actually a healthcare place"
+_ALLOWED_HEALTH_TYPES = {
+    'hospital', 'doctor', 'health', 'physiotherapist',
+    'dentist', 'pharmacy', 'medical_lab',
+}
+# Google place `types` that mean "this is NOT healthcare, drop it even if the
+# text query matched" — Text Search does loose full-text matching, so a
+# furniture shop named 'City Hospital Furniture Mart' or a salon calling
+# itself 'Skin Clinic' can otherwise slip through.
+_BLOCKED_TYPES = {
+    'furniture_store', 'home_goods_store', 'store', 'shopping_mall',
+    'hair_care', 'beauty_salon', 'spa', 'clothing_store', 'restaurant',
+    'cafe', 'food', 'lodging', 'real_estate_agency', 'car_dealer',
+    'electronics_store', 'shoe_store', 'jewelry_store',
+}
+
+
+def _is_real_healthcare_place(types):
+    types = set(types or [])
+    if types & _BLOCKED_TYPES:
+        return False
+    return bool(types & _ALLOWED_HEALTH_TYPES)
+
+
 def _classify_place_type(types, keyword):
     """Decide Hospital vs Clinic from Google's place types + the search keyword."""
     types = types or []
@@ -202,7 +232,10 @@ def _classify_place_type(types, keyword):
 def google_nearby_places(lat, lng, radius=5000, keyword='hospital'):
     """Google Places Text Search — returns list of hospital/clinic dicts.
     Text Search (not Nearby Search) is used because it accepts free-text
-    keywords like 'orthopedic clinic', not just fixed place types."""
+    keywords like 'orthopedic clinic', not just fixed place types.
+    Results are filtered by Google's `types` field so non-healthcare
+    businesses that merely match the search text (furniture shops, salons,
+    etc.) don't get included."""
     if not GOOGLE_MAPS_KEY:
         return []
     radius = min(int(radius), 50000)
@@ -224,17 +257,29 @@ def google_nearby_places(lat, lng, radius=5000, keyword='hospital'):
             print(f"[Google Places] Error: {data.get('error_message','')}")
             return []
         results = []
+        skipped = 0
         for place in data.get('results', []):
             loc = place.get('geometry', {}).get('location', {})
             if 'lat' not in loc or 'lng' not in loc:
                 continue
-            ptype = _classify_place_type(place.get('types', []), keyword)
+            place_types = place.get('types', [])
+            if not _is_real_healthcare_place(place_types):
+                skipped += 1
+                continue
+            dist_km = haversine(lat, lng, loc['lat'], loc['lng'])
+            if dist_km > (radius / 1000):
+                # Google's Text Search `radius` is only a soft bias, not a hard
+                # cutoff — it can still return places far outside it (this is
+                # what caused 60km+/entire-country results to show up).
+                skipped += 1
+                continue
+            ptype = _classify_place_type(place_types, keyword)
             results.append({
                 'name':           place.get('name', 'Healthcare Facility'),
                 'address':        place.get('formatted_address', ''),
                 'lat':            float(loc['lat']),
                 'lng':            float(loc['lng']),
-                'distance':       round(haversine(lat, lng, loc['lat'], loc['lng']), 2),
+                'distance':       round(dist_km, 2),
                 'type':           ptype,
                 'place_id':       place.get('place_id', ''),
                 'phone':          '',
@@ -243,6 +288,8 @@ def google_nearby_places(lat, lng, radius=5000, keyword='hospital'):
                 'popularity':     float(place.get('user_ratings_total', 0) or 0),
                 'display_rating': float(place.get('rating', 0) or 0),
             })
+        if skipped:
+            print(f"[Google Places] Filtered out {skipped} irrelevant/out-of-radius result(s) for '{keyword}'")
         return results
     except Exception as e:
         print(f"[Google Places] Exception: {e}")
