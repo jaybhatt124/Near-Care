@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}Privacy Policy – NearCares{% endblock %}
+
+{% block head %}
+<style>
+  .policy-wrap { max-width: 800px; margin: 0 auto; }
+  .policy-updated {
+    display: inline-block;
+    background: var(--primary-light, #e6f5f3);
+    color: var(--primary, #0f766e);
+    font-size: 0.85rem;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 100px;
+    margin-bottom: 32px;
+  }
+  .policy-section { margin-bottom: 36px; }
+  .policy-section h2 {
+    font-size: 1.35rem;
+    font-weight: 800;
+    margin-bottom: 12px;
+    color: var(--text, #111827);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .policy-section h3 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin: 18px 0 8px;
+    color: var(--text, #111827);
+  }
+  .policy-section p, .policy-section li {
+    color: var(--text-muted, #6b7280);
+    line-height: 1.8;
+    font-size: 0.98rem;
+  }
+  .policy-section ul, .policy-section ol {
+    padding-left: 22px;
+    margin-bottom: 12px;
+  }
+  .policy-section li { margin-bottom: 8px; }
+  .policy-section strong { color: var(--text, #111827); }
+  .policy-highlight {
+    background: var(--bg, #f7f9f9);
+    border: 1px solid var(--border, #e5e9e8);
+    border-left: 4px solid var(--primary, #0f766e);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 16px 0;
+  }
+  .policy-highlight p { color: var(--text, #111827); margin: 0; font-size: 0.95rem; }
+  .policy-toc {
+    background: var(--bg, #f7f9f9);
+    border: 1px solid var(--border, #e5e9e8);
+    border-radius: 14px;
+    padding: 22px 24px;
+    margin-bottom: 40px;
+  }
+  .policy-toc h3 { margin-top: 0; margin-bottom: 12px; font-size: 1rem; }
+  .policy-toc ol { margin-bottom: 0; }
+  .policy-toc a { color: var(--primary, #0f766e); text-decoration: none; font-weight: 600; font-size: 0.92rem; }
+  .policy-toc a:hover { text-decoration: underline; }
+  .policy-contact-box {
+    background: var(--primary, #0f766e);
+    border-radius: 16px;
+    padding: 28px;
+    text-align: center;
+    color: #fff;
+  }
+  .policy-contact-box h3 { color: #fff; font-size: 1.2rem; margin-bottom: 8px; }
+  .policy-contact-box p { color: rgba(255,255,255,0.85); margin-bottom: 16px; }
+  .policy-contact-box a.policy-btn {
+    display: inline-block;
+    background: #fff;
+    color: var(--primary, #0f766e);
+    font-weight: 700;
+    padding: 10px 24px;
+    border-radius: 10px;
+    text-decoration: none;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<section class="page-hero">
+  <div class="container">
+    <h1>Privacy Policy</h1>
+    <p>How NearCares collects, uses, and protects your information</p>
+  </div>
+</section>
+
+<section class="section content-section">
+  <div class="container">
+    <div class="policy-wrap">
+
+      <span class="policy-updated">📅 Last updated: July 2026</span>
+
+      <div class="policy-toc">
+        <h3>On this page</h3>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#collect">Information We Collect</a></li>
+          <li><a href="#use">How We Use Your Information</a></li>
+          <li><a href="#thirdparty">Third-Party Services</a></li>
+          <li><a href="#storage">Data Storage &amp; Retention</a></li>
+          <li><a href="#sharing">Data Sharing &amp; Disclosure</a></li>
+          <li><a href="#rights">Your Rights &amp; Choices</a></li>
+          <li><a href="#children">Children's Privacy</a></li>
+          <li><a href="#security">Security</a></li>
+          <li><a href="#changes">Changes to This Policy</a></li>
+          <li><a href="#contact">Contact Us</a></li>
+        </ol>
+      </div>
+
+      <div class="policy-section" id="overview">
+        <h2>📋 1. Overview</h2>
+        <p>
+          NearCares ("we," "our," or "us") helps you find nearby hospitals and clinics matched to
+          your symptoms or affected body part, using your location and Google's mapping services.
+          This policy explains what information we collect through our website and mobile app,
+          why we collect it, and how it's handled.
+        </p>
+        <div class="policy-highlight">
+          <p><strong>In short:</strong> we only use your location to search for nearby hospitals in
+          the moment you search — we do not track, store, or sell your location history. We don't
+          require an account or login to use NearCares.</p>
+        </div>
+      </div>
+
+      <div class="policy-section" id="collect">
+        <h2>📥 2. Information We Collect</h2>
+
+        <h3>Location Data</h3>
+        <p>
+          When you tap "Use my location" or select a body part / condition to search, we request
+          your device's GPS coordinates (with your permission) to find hospitals and clinics near
+          you. If you prefer not to share GPS location, you can instead type in an address manually,
+          which is converted to coordinates using Google's Geocoding API.
+        </p>
+
+        <h3>Contact Form Information</h3>
+        <p>
+          If you use our Contact page, we collect the name, email address, and message you
+          voluntarily provide, so we can respond to your query.
+        </p>
+
+        <h3>Information We Do NOT Collect</h3>
+        <ul>
+          <li>We do not require you to create an account or log in</li>
+          <li>We do not collect medical records, diagnoses, or health history</li>
+          <li>We do not access your contacts, photos, camera, or microphone</li>
+          <li>We do not use advertising trackers or third-party analytics SDKs</li>
+        </ul>
+      </div>
+
+      <div class="policy-section" id="use">
+        <h2>⚙️ 3. How We Use Your Information</h2>
+        <ul>
+          <li><strong>Location:</strong> sent to our server for the sole purpose of searching nearby
+              hospitals/clinics for your current query, then discarded — it is not saved to our database</li>
+          <li><strong>Contact form data:</strong> stored securely so we can read and respond to your message</li>
+          <li>We never use your information to serve ads or sell it to data brokers</li>
+        </ul>
+      </div>
+
+      <div class="policy-section" id="thirdparty">
+        <h2>🔗 4. Third-Party Services</h2>
+        <p>NearCares relies on the following third-party services to function:</p>
+        <ul>
+          <li>
+            <strong>Google Maps Platform</strong> (Places API &amp; Geocoding API) — when you search,
+            your location coordinates or typed address are sent to Google to find and map nearby
+            hospitals. This is governed by
+            <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.
+          </li>
+          <li>
+            <strong>MongoDB Atlas</strong> — our database provider, used to securely store our
+            verified hospital listings and any contact form submissions.
+          </li>
+          <li>
+            <strong>Vercel</strong> — our hosting provider for the NearCares website and backend.
+          </li>
+        </ul>
+      </div>
+
+      <div class="policy-section" id="storage">
+        <h2>🗄️ 5. Data Storage &amp; Retention</h2>
+        <p>
+          Location data used for a search is processed in real time and is not written to our
+          database. Contact form submissions are retained only as long as needed to address your
+          query, after which they may be deleted. Our verified hospital directory (name, address,
+          specialty) is public information maintained by our admin team and is not personal data.
+        </p>
+      </div>
+
+      <div class="policy-section" id="sharing">
+        <h2>🚫 6. Data Sharing &amp; Disclosure</h2>
+        <p>
+          We do not sell, rent, or trade your personal information to third parties for marketing
+          or advertising purposes. Information is only shared with the third-party services listed
+          in Section 4, strictly to provide the core functionality of the app (finding hospitals
+          near you), or if required by law.
+        </p>
+      </div>
+
+      <div class="policy-section" id="rights">
+        <h2>✅ 7. Your Rights &amp; Choices</h2>
+        <ul>
+          <li><strong>Location permission:</strong> you can allow, deny, or revoke location access
+              anytime from your device settings — the app will fall back to manual address entry</li>
+          <li><strong>Delete your data:</strong> if you've submitted a contact form and want it
+              deleted, email us using the contact details below</li>
+          <li><strong>No account to manage:</strong> since NearCares doesn't use accounts, there's no
+              profile data tied to your identity to begin with</li>
+        </ul>
+      </div>
+
+      <div class="policy-section" id="children">
+        <h2>🧒 8. Children's Privacy</h2>
+        <p>
+          NearCares is not directed at children under the age of 13, and we do not knowingly
+          collect personal information from children. If you believe a child has provided us
+          information, please contact us and we will remove it.
+        </p>
+      </div>
+
+      <div class="policy-section" id="security">
+        <h2>🔒 9. Security</h2>
+        <p>
+          We use industry-standard measures — including encrypted (HTTPS/TLS) connections between
+          the app, our servers, and third-party APIs — to protect information in transit. No method
+          of transmission or storage is 100% secure, but we work to protect your information using
+          commercially reasonable safeguards.
+        </p>
+      </div>
+
+      <div class="policy-section" id="changes">
+        <h2>🔄 10. Changes to This Policy</h2>
+        <p>
+          We may update this Privacy Policy from time to time to reflect changes in our practices
+          or for legal reasons. The "Last updated" date at the top of this page will reflect the
+          most recent revision. Continued use of NearCares after changes means you accept the
+          updated policy.
+        </p>
+      </div>
+
+      <div class="policy-section" id="contact">
+        <div class="policy-contact-box">
+          <h3>📧 Questions about this policy?</h3>
+          <p>Reach out to us anytime and we'll get back to you.</p>
+          <a href="/contact" class="policy-btn">Contact Us</a>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+{% endblock %}
