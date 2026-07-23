@@ -6,9 +6,10 @@ NearCares - Migrated Version
 """
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
-import requests, math, os, json
+import requests, math, os, json, time
 from datetime import datetime
 from functools import wraps
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from bson import ObjectId
 
 # ── Load .env ──────────────────────────────────────────────────────────────
@@ -28,9 +29,13 @@ try:
         _tls_kwargs = {'tls': True, 'tlsCAFile': certifi.where()}
     except ImportError:
         print("⚠️  certifi not installed (pip install certifi) — TLS handshake may fail on Windows")
-        _tls_kwargs = {}
-    _client   = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000, **_tls_kwargs)
-    _client.server_info()          # test connection
+        _tls_kwargs = {'tls': True}
+    try:
+        _client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000, connectTimeoutMS=10000, socketTimeoutMS=10000, **_tls_kwargs)
+        _client.server_info()
+    except Exception:
+        _client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000, connectTimeoutMS=10000, socketTimeoutMS=10000, tls=True)
+        _client.server_info()
     _db       = _client[os.environ.get('MONGO_DB', 'nearcares')]
     hospitals_col  = _db['hospitals']
     contacts_col   = _db['contacts']
@@ -49,7 +54,6 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASS', 'admin123')
 
 # ── Google Maps key ────────────────────────────────────────────────────────
 GOOGLE_MAPS_KEY = os.environ.get('GOOGLE_MAPS_KEY', '')
-
 if not GOOGLE_MAPS_KEY:
     print("⚠️  GOOGLE_MAPS_KEY not set — hospital search will not work")
 
@@ -196,7 +200,8 @@ def db_delete_disease(did):
 # Google place `types` that mean "this is actually a healthcare place"
 _ALLOWED_HEALTH_TYPES = {
     'hospital', 'doctor', 'health', 'physiotherapist',
-    'dentist', 'pharmacy', 'medical_lab',
+    'dentist', 'pharmacy', 'medical_lab', 'clinic',
+    'point_of_interest', 'establishment',
 }
 # Google place `types` that mean "this is NOT healthcare, drop it even if the
 # text query matched" — Text Search does loose full-text matching, so a
@@ -206,15 +211,22 @@ _BLOCKED_TYPES = {
     'furniture_store', 'home_goods_store', 'store', 'shopping_mall',
     'hair_care', 'beauty_salon', 'spa', 'clothing_store', 'restaurant',
     'cafe', 'food', 'lodging', 'real_estate_agency', 'car_dealer',
-    'electronics_store', 'shoe_store', 'jewelry_store',
+    'electronics_store', 'shoe_store', 'jewelry_store', 'parking',
+    'gym', 'moving_company', 'storage', 'insurance_agency',
 }
 
 
-def _is_real_healthcare_place(types):
+def _is_real_healthcare_place(types, name=''):
     types = set(types or [])
     if types & _BLOCKED_TYPES:
         return False
-    return bool(types & _ALLOWED_HEALTH_TYPES)
+    if types & _ALLOWED_HEALTH_TYPES:
+        return True
+    name_lower = (name or '').lower()
+    healthcare_words = ['hospital', 'clinic', 'medical', 'health', 'nursing',
+                        'dental', 'eye', 'heart', 'surgery', 'diagnostic',
+                        'pathology', 'pharmacy', 'pharma', 'care']
+    return any(w in name_lower for w in healthcare_words)
 
 
 def _classify_place_type(types, keyword):
@@ -229,71 +241,114 @@ def _classify_place_type(types, keyword):
     return 'Hospital'
 
 
-def google_nearby_places(lat, lng, radius=5000, keyword='hospital'):
-    """Google Places Text Search — returns list of hospital/clinic dicts.
-    Text Search (not Nearby Search) is used because it accepts free-text
-    keywords like 'orthopedic clinic', not just fixed place types.
-    Results are filtered by Google's `types` field so non-healthcare
-    businesses that merely match the search text (furniture shops, salons,
-    etc.) don't get included."""
+def _parse_places_response(data, lat, lng, radius, keyword):
+    """Parse Google Places API response into hospital dicts."""
+    results = []
+    skipped = 0
+    for place in data.get('results', []):
+        loc = place.get('geometry', {}).get('location', {})
+        if 'lat' not in loc or 'lng' not in loc:
+            continue
+        place_types = place.get('types', [])
+        place_name = place.get('name', '')
+        if not _is_real_healthcare_place(place_types, place_name):
+            skipped += 1
+            continue
+        dist_km = haversine(lat, lng, loc['lat'], loc['lng'])
+        if dist_km > (radius / 1000):
+            skipped += 1
+            continue
+        ptype = _classify_place_type(place_types, keyword)
+        results.append({
+            'name':           place.get('name', 'Healthcare Facility'),
+            'address':        place.get('formatted_address', place.get('vicinity', '')),
+            'lat':            float(loc['lat']),
+            'lng':            float(loc['lng']),
+            'distance':       round(dist_km, 2),
+            'type':           ptype,
+            'place_id':       place.get('place_id', ''),
+            'phone':          place.get('international_phone_number', place.get('formatted_phone_number', '')),
+            'source':         'google',
+            'priority_rank':  0,
+            'popularity':     float(place.get('user_ratings_total', 0) or 0),
+            'display_rating': float(place.get('rating', 0) or 0),
+        })
+    if skipped:
+        print(f"[Google Places] Filtered out {skipped} irrelevant/out-of-radius result(s) for '{keyword}'")
+    return results
+
+
+def google_nearby_places(lat, lng, radius=5000, keyword='hospital', max_pages=3):
+    """Google Places Text Search with pagination."""
     if not GOOGLE_MAPS_KEY:
         return []
     radius = min(int(radius), 50000)
+    all_results = []
     try:
-        resp = requests.get(
-            'https://maps.googleapis.com/maps/api/place/textsearch/json',
-            params={
-                'query':    keyword,
-                'location': f'{lat},{lng}',
-                'radius':   radius,
-                'key':      GOOGLE_MAPS_KEY,
-            },
-            timeout=15
-        )
-        data   = resp.json()
-        status = data.get('status')
-        print(f"[Google Places] status={status} keyword={keyword}")
-        if status not in ('OK', 'ZERO_RESULTS'):
-            print(f"[Google Places] Error: {data.get('error_message','')}")
-            return []
-        results = []
-        skipped = 0
-        for place in data.get('results', []):
-            loc = place.get('geometry', {}).get('location', {})
-            if 'lat' not in loc or 'lng' not in loc:
-                continue
-            place_types = place.get('types', [])
-            if not _is_real_healthcare_place(place_types):
-                skipped += 1
-                continue
-            dist_km = haversine(lat, lng, loc['lat'], loc['lng'])
-            if dist_km > (radius / 1000):
-                # Google's Text Search `radius` is only a soft bias, not a hard
-                # cutoff — it can still return places far outside it (this is
-                # what caused 60km+/entire-country results to show up).
-                skipped += 1
-                continue
-            ptype = _classify_place_type(place_types, keyword)
-            results.append({
-                'name':           place.get('name', 'Healthcare Facility'),
-                'address':        place.get('formatted_address', ''),
-                'lat':            float(loc['lat']),
-                'lng':            float(loc['lng']),
-                'distance':       round(dist_km, 2),
-                'type':           ptype,
-                'place_id':       place.get('place_id', ''),
-                'phone':          '',
-                'source':         'google',
-                'priority_rank':  0,
-                'popularity':     float(place.get('user_ratings_total', 0) or 0),
-                'display_rating': float(place.get('rating', 0) or 0),
-            })
-        if skipped:
-            print(f"[Google Places] Filtered out {skipped} irrelevant/out-of-radius result(s) for '{keyword}'")
-        return results
+        params = {
+            'query':    keyword,
+            'location': f'{lat},{lng}',
+            'radius':   radius,
+            'key':      GOOGLE_MAPS_KEY,
+        }
+        for page in range(max_pages):
+            resp = requests.get(
+                'https://maps.googleapis.com/maps/api/place/textsearch/json',
+                params=params, timeout=10
+            )
+            data = resp.json()
+            status = data.get('status')
+            print(f"[Google TextSearch] status={status} keyword={keyword} page={page+1}")
+            if status not in ('OK', 'ZERO_RESULTS'):
+                break
+            all_results.extend(_parse_places_response(data, lat, lng, radius, keyword))
+            next_token = data.get('next_page_token')
+            if not next_token or page == max_pages - 1:
+                break
+            time.sleep(2)
+            params = {'pagetoken': next_token, 'key': GOOGLE_MAPS_KEY}
+        return all_results
     except Exception as e:
-        print(f"[Google Places] Exception: {e}")
+        print(f"[Google TextSearch] Exception: {e}")
+        return all_results
+
+
+def google_nearby_search(lat, lng, radius=5000, keyword='hospital', max_pages=3):
+    """Google Places Nearby Search — different algorithm than Text Search."""
+    if not GOOGLE_MAPS_KEY:
         return []
+    radius = min(int(radius), 50000)
+    all_results = []
+    try:
+        params = {
+            'location': f'{lat},{lng}',
+            'radius':   radius,
+            'type':     'hospital',
+            'key':      GOOGLE_MAPS_KEY,
+        }
+        if keyword and keyword.lower() not in ('hospital', 'clinic'):
+            params['keyword'] = keyword
+        for page in range(max_pages):
+            resp = requests.get(
+                'https://maps.googleapis.com/maps/api/place/nearbysearch/json',
+                params=params, timeout=10
+            )
+            data = resp.json()
+            status = data.get('status')
+            print(f"[Google NearbySearch] status={status} keyword={keyword} page={page+1}")
+            if status not in ('OK', 'ZERO_RESULTS'):
+                break
+            all_results.extend(_parse_places_response(data, lat, lng, radius, keyword))
+            next_token = data.get('next_page_token')
+            if not next_token or page == max_pages - 1:
+                break
+            time.sleep(2)
+            params = {'pagetoken': next_token, 'key': GOOGLE_MAPS_KEY}
+        return all_results
+    except Exception as e:
+        print(f"[Google NearbySearch] Exception: {e}")
+        return all_results
+
 
 
 def google_geocode(address):
@@ -353,27 +408,30 @@ def google_reverse_geocode(lat, lng):
 # ══════════════════════════════════════════════════════════════════════════
 
 MULTISPECIALTY_WORDS = [
-    'safal','hope','medistar','sterling','apollo','shalby','zydus','kiran',
-    'vedanta','narayana','manipal','kokilaben','fortis','max','medanta',
-    'multispecialt','multi specialt','super specialt','general hospital',
-    'civil hospital','district hospital','government hospital','govt hospital',
-    'medical college','medical center','medical centre','comprehensive',
+    'apollo','shalby','zydus','sterling','fortis','max','medanta',
+    'narayana','manipal','kokilaben','medistar','safal','hope','kiran',
+    'vedanta','multispecialt','multi specialt','super specialt',
 ]
 
 SPECIALTIES = {
-    'orthopedic':    {'label': '🦴 Orthopedic & Bone',      'icon': '🦴', 'keywords': ['ortho','orthopedic','bone','joint','fracture','spine','arthroplasty','arthritis']},
-    'neurology':     {'label': '🧠 Neurology & Brain',       'icon': '🧠', 'keywords': ['neuro','neurology','brain','stroke','epilepsy']},
-    'ent':           {'label': '👂 ENT',                     'icon': '👂', 'keywords': ['ent','ear','nose','throat','sinus','audiolog']},
-    'ophthalmology': {'label': '👁️ Eye Hospital',            'icon': '👁️', 'keywords': ['eye','ophthalm','vision','retina','cataract','netralaya']},
-    'cardiology':    {'label': '❤️ Cardiology & Heart',      'icon': '❤️', 'keywords': ['cardio','cardiac','heart','cardiovascular','angioplasty']},
-    'pulmonology':   {'label': '🫁 Pulmonology & Chest',     'icon': '🫁', 'keywords': ['pulmo','pulmonary','lung','chest','respiratory','asthma']},
-    'gastro':        {'label': '🫃 Gastroenterology',        'icon': '🫃', 'keywords': ['gastro','digestive','intestine','bowel','colonoscopy']},
-    'oncology':      {'label': '🎗️ Cancer & Oncology',       'icon': '🎗️', 'keywords': ['onco','oncology','cancer','tumour','tumor','radiotherapy']},
-    'nephrology':    {'label': '🫘 Kidney & Nephrology',     'icon': '🫘', 'keywords': ['nephro','kidney','renal','dialysis','urology']},
-    'endocrinology': {'label': '💊 Diabetes & Endocrinology','icon': '💊', 'keywords': ['endocrin','diabetes','diabetology','hormone','bariatric']},
-    'dermatology':   {'label': '🧴 Skin & Dermatology',      'icon': '🧴', 'keywords': ['derma','skin clinic','cosmet','trichology']},
-    'psychiatry':    {'label': '🧘 Psychiatry & Mental Health','icon':'🧘','keywords': ['psychiatr','psychology','mental health','addiction','counselling']},
-    'general':       {'label': '🏥 General Medicine',        'icon': '🏥', 'keywords': ['general medicine','family medicine','polyclinic','nursing home']},
+    'orthopedic':    {'label': '🦴 Orthopedic & Bone',       'icon': '🦴', 'keywords': ['ortho','orthopedic','bone','joint','fracture','spine','arthroplasty','arthritis']},
+    'neurology':     {'label': '🧠 Neurology & Brain',        'icon': '🧠', 'keywords': ['neuro','neurology','brain','stroke','epilepsy']},
+    'ent':           {'label': '👂 ENT',                      'icon': '👂', 'keywords': ['ent','ear','nose','throat','sinus','audiolog']},
+    'ophthalmology': {'label': '👁️ Eye Hospital',             'icon': '👁️', 'keywords': ['eye','ophthalm','vision','retina','cataract','netralaya']},
+    'cardiology':    {'label': '❤️ Cardiology & Heart',       'icon': '❤️', 'keywords': ['cardio','cardiac','heart','cardiovascular','angioplasty']},
+    'pulmonology':   {'label': '🫁 Pulmonology & Chest',      'icon': '🫁', 'keywords': ['pulmo','pulmonary','lung','chest','respiratory','asthma']},
+    'gastro':        {'label': '🫃 Gastroenterology',         'icon': '🫃', 'keywords': ['gastro','digestive','intestine','bowel','colonoscopy']},
+    'oncology':      {'label': '🎗️ Cancer & Oncology',        'icon': '🎗️', 'keywords': ['onco','oncology','cancer','tumour','tumor','radiotherapy']},
+    'nephrology':    {'label': '🫘 Kidney & Nephrology',      'icon': '🫘', 'keywords': ['nephro','kidney','renal','dialysis','urology']},
+    'endocrinology': {'label': '💊 Diabetes & Endocrinology', 'icon': '💊', 'keywords': ['endocrin','diabetes','diabetology','hormone','bariatric']},
+    'dermatology':   {'label': '🧴 Skin & Dermatology',       'icon': '🧴', 'keywords': ['derma','skin clinic','cosmet','trichology']},
+    'psychiatry':    {'label': '🧘 Psychiatry & Mental Health','icon': '🧘', 'keywords': ['psychiatr','psychology','mental health','addiction','counselling']},
+    'gynecology':    {'label': '🤰 Gynecology & Obstetrics',  'icon': '🤰', 'keywords': ['gynecol','obstetric','maternity','women','ladies','womens health','fetal','pregnancy','delivery','infertility','ivf']},
+    'dental':        {'label': '🦷 Dental & Oral',            'icon': '🦷', 'keywords': ['dental','dentist','tooth','teeth','orthodont','oral','periodontic']},
+    'pediatrics':    {'label': '👶 Pediatrics & Child',       'icon': '👶', 'keywords': ['pediatr','child','children','baby','neonat','paediatr']},
+    'fertility':     {'label': '🧬 Fertility & IVF',          'icon': '🧬', 'keywords': ['fertil','ivf','test tube','infertility','reproductive']},
+    'urology':       {'label': '🔬 Urology',                  'icon': '🔬', 'keywords': ['urolog','prostate','bladder','urinary tract']},
+    'general':       {'label': '🏥 General Medicine',         'icon': '🏥', 'keywords': ['general medicine','family medicine','polyclinic','nursing home']},
 }
 
 BODY_PART_SPECIALTIES = {
@@ -423,7 +481,6 @@ BODY_PART_SPECIALTIES = {
 }
 
 ILLNESS_SPECIALTIES = {
-    # General
     'fever':         ['general'],
     'cough':         ['pulmonology', 'ent'],
     'cold':          ['ent', 'general'],
@@ -431,78 +488,169 @@ ILLNESS_SPECIALTIES = {
     'diarrhea':      ['gastro'],
     'vomiting':      ['gastro', 'general'],
     'fatigue':       ['general', 'endocrinology'],
-    # Heart & BP
     'heart_disease': ['cardiology'],
     'bp':            ['cardiology', 'general'],
     'hypertension':  ['cardiology', 'general'],
     'chest_pain':    ['cardiology', 'pulmonology'],
-    # Lungs
     'asthma':        ['pulmonology'],
     'breathing':     ['pulmonology', 'cardiology'],
-    # Gastro
     'liver':         ['gastro'],
     'gastric':       ['gastro'],
     'acidity':       ['gastro'],
     'constipation':  ['gastro'],
-    # Kidney & urology
     'kidney':        ['nephrology'],
-    'urinary':       ['nephrology'],
-    # Bone & joints
+    'urinary':       ['nephrology', 'urology'],
     'arthritis':     ['orthopedic'],
     'back_pain':     ['orthopedic', 'neurology'],
     'fracture':      ['orthopedic'],
     'joint_pain':    ['orthopedic'],
     'bone':          ['orthopedic'],
-    # Brain & nerves
     'headache':      ['neurology', 'general'],
     'migraine':      ['neurology'],
     'stroke':        ['neurology'],
     'epilepsy':      ['neurology'],
     'paralysis':     ['neurology'],
-    # Eyes
     'eye':           ['ophthalmology'],
     'vision':        ['ophthalmology'],
     'cataract':      ['ophthalmology'],
-    # ENT
-    'thyroid':       ['ent', 'endocrinology'],
+    'thyroid':       ['endocrinology'],
     'ear_pain':      ['ent'],
     'sinus':         ['ent'],
     'tonsil':        ['ent'],
-    # Skin
     'skin':          ['dermatology'],
     'allergy':       ['dermatology', 'pulmonology'],
     'rash':          ['dermatology'],
     'acne':          ['dermatology'],
-    # Mental health
     'depression':    ['psychiatry'],
     'anxiety':       ['psychiatry'],
     'stress':        ['psychiatry'],
     'insomnia':      ['psychiatry'],
-    # Endocrine
     'diabetes':      ['endocrinology'],
     'obesity':       ['endocrinology'],
     'hormone':       ['endocrinology'],
-    # Cancer
     'cancer':        ['oncology'],
     'tumor':         ['oncology'],
+    'gynecologist':  ['gynecology'],
+    'gynecology':    ['gynecology'],
+    'pregnancy':     ['gynecology'],
+    'maternity':     ['gynecology'],
+    'delivery':      ['gynecology'],
+    'period':        ['gynecology'],
+    'menstrual':     ['gynecology'],
+    'infertility':   ['fertility', 'gynecology'],
+    'ivf':           ['fertility'],
+    'dental':        ['dental'],
+    'toothache':     ['dental'],
+    'teeth':         ['dental'],
+    'child':         ['pediatrics'],
+    'baby':          ['pediatrics'],
+    'pediatric':     ['pediatrics'],
+    'prostate':      ['urology'],
+    'bladder':       ['urology', 'nephrology'],
+    'stones':        ['nephrology', 'urology'],
+    'appendix':      ['gastro', 'general'],
+    'hernia':        ['gastro', 'general'],
+    'piles':         ['gastro'],
+    'fistula':       ['gastro'],
+    'varicose':      ['orthopedic', 'general'],
 }
 
 # Keywords to use when calling Google Places Text Search per specialty
 # These are plain text search queries — Google matches against place names/types
 SPECIALTY_SEARCH_KEYWORDS = {
-    'orthopedic':    ['orthopedic hospital', 'bone hospital', 'ortho clinic', 'joint clinic'],
-    'neurology':     ['neurology hospital', 'neuro clinic', 'brain hospital'],
-    'ent':           ['ent hospital', 'ear nose throat', 'ent clinic'],
-    'ophthalmology': ['eye hospital', 'eye clinic', 'netralaya', 'vision centre'],
-    'cardiology':    ['heart hospital', 'cardiac hospital', 'cardiology clinic'],
-    'pulmonology':   ['chest hospital', 'lung clinic', 'pulmonology', 'respiratory clinic'],
-    'gastro':        ['gastroenterology', 'gastro clinic', 'digestive clinic'],
-    'oncology':      ['cancer hospital', 'oncology centre', 'cancer clinic'],
-    'nephrology':    ['kidney hospital', 'nephrology clinic', 'dialysis centre'],
-    'endocrinology': ['diabetes clinic', 'endocrinology', 'diabetology'],
-    'dermatology':   ['skin clinic', 'dermatology clinic', 'skin hospital'],
-    'psychiatry':    ['psychiatry', 'mental health clinic', 'psychology clinic'],
+    'orthopedic':    ['orthopedic hospital', 'bone hospital', 'ortho clinic', 'joint clinic', 'joint replacement', 'spine hospital', 'fracture clinic', 'arthritis hospital'],
+    'neurology':     ['neurology hospital', 'neuro clinic', 'brain hospital', 'stroke hospital', 'epilepsy clinic', 'spine specialist', 'neuro surgery'],
+    'ent':           ['ent hospital', 'ear nose throat', 'ent clinic', 'sinus clinic', 'hearing clinic', 'throat specialist'],
+    'ophthalmology': ['eye hospital', 'eye clinic', 'netralaya', 'vision centre', 'retina clinic', 'lasik clinic', 'cataract surgery'],
+    'cardiology':    ['heart hospital', 'cardiac hospital', 'cardiology clinic', 'heart surgery', 'angioplasty', 'cardiac care', 'bypass surgery'],
+    'pulmonology':   ['chest hospital', 'lung clinic', 'pulmonology', 'respiratory clinic', 'asthma clinic', 'tb hospital', 'breathing specialist'],
+    'gastro':        ['gastroenterology', 'gastro clinic', 'digestive clinic', 'liver hospital', 'colonoscopy', 'endoscopy', 'hepatology'],
+    'oncology':      ['cancer hospital', 'oncology centre', 'cancer clinic', 'tumor hospital', 'chemotherapy', 'radiation therapy', 'cancer surgery'],
+    'nephrology':    ['kidney hospital', 'nephrology clinic', 'dialysis centre', 'kidney transplant', 'renal clinic', 'urology hospital'],
+    'endocrinology': ['diabetes clinic', 'endocrinology', 'diabetology', 'thyroid clinic', 'hormone clinic', 'metabolism clinic'],
+    'dermatology':   ['skin clinic', 'dermatology clinic', 'skin hospital', 'hair clinic', 'allergy clinic', 'cosmetic clinic'],
+    'psychiatry':    ['psychiatry', 'mental health clinic', 'psychology clinic', 'depression clinic', 'anxiety clinic', 'rehabilitation centre'],
+    'gynecology':    ['gynecology', 'maternity hospital', 'women hospital', 'obstetrics', 'ivf centre', 'pregnancy care', 'delivery hospital'],
+    'dental':        ['dental hospital', 'dental clinic', 'dental care', 'ortho dental', 'root canal', 'implant clinic', 'smile clinic'],
+    'pediatrics':    ['children hospital', 'pediatric hospital', 'child clinic', 'kids hospital', 'neonatal', 'child specialist'],
+    'fertility':     ['ivf centre', 'fertility clinic', 'test tube baby', 'infertility clinic', 'iui clinic', 'embryo transfer'],
+    'urology':       ['urology hospital', 'urology clinic', 'prostate clinic', 'kidney stone', 'bladder clinic', 'urinary specialist'],
     'general':       ['hospital', 'clinic', 'medical centre', 'nursing home'],
+}
+
+DISEASE_DIRECT_SEARCHES = {
+    'fever':         ['general physician', 'fever clinic', 'general practitioner'],
+    'cough':         ['cough specialist', 'chest doctor', 'respiratory clinic', 'pulmonologist'],
+    'cold':          ['ent specialist', 'cold flu clinic', 'throat doctor'],
+    'flu':           ['general physician', 'flu treatment', 'fever doctor'],
+    'diarrhea':      ['gastroenterologist', 'stomach doctor', 'gastro clinic'],
+    'vomiting':      ['gastroenterologist', 'stomach specialist', 'nausea treatment'],
+    'fatigue':       ['general physician', 'health checkup', 'thyroid specialist'],
+    'heart_disease': ['heart hospital', 'cardiac surgeon', 'angioplasty', 'cardiac care', 'heart specialist'],
+    'bp':            ['bp specialist', 'heart clinic', 'hypertension doctor', 'cardiologist'],
+    'hypertension':  ['cardiologist', 'bp doctor', 'heart clinic', 'hypertension specialist'],
+    'chest_pain':    ['emergency hospital', 'cardiac care', 'heart emergency', 'chest specialist'],
+    'asthma':        ['asthma clinic', 'pulmonologist', 'respiratory specialist', 'breathing treatment'],
+    'breathing':     ['pulmonologist', 'respiratory clinic', 'lung specialist', 'breathing problem doctor'],
+    'liver':         ['liver specialist', 'hepatologist', 'gastroenterologist', 'liver hospital'],
+    'gastric':       ['gastric treatment', 'stomach specialist', 'gastro clinic', 'acid reflux doctor'],
+    'acidity':       ['acidity treatment', 'stomach doctor', 'gastro clinic', 'acid reflux specialist'],
+    'constipation':  ['gastroenterologist', 'digestive specialist', 'stomach doctor'],
+    'kidney':        ['kidney specialist', 'nephrologist', 'kidney hospital', 'renal clinic'],
+    'urinary':       ['urologist', 'urinary specialist', 'kidney stone doctor', 'bladder specialist'],
+    'arthritis':     ['arthritis specialist', 'rheumatologist', 'joint pain doctor', 'orthopedic surgeon'],
+    'back_pain':     ['spine specialist', 'back pain clinic', 'orthopedic surgeon', 'pain management'],
+    'fracture':      ['fracture clinic', 'orthopedic surgeon', 'bone hospital', 'trauma center'],
+    'joint_pain':    ['joint specialist', 'joint replacement', 'orthopedic surgeon', 'knee specialist'],
+    'bone':          ['bone specialist', 'orthopedic surgeon', 'bone hospital'],
+    'headache':      ['neurologist', 'migraine clinic', 'headache specialist', 'pain clinic'],
+    'migraine':      ['migraine specialist', 'neurologist', 'headache clinic', 'migraine treatment'],
+    'stroke':        ['stroke center', 'neurologist', 'emergency hospital', 'stroke specialist'],
+    'epilepsy':      ['epilepsy clinic', 'neurologist', 'seizure specialist'],
+    'paralysis':     ['neurologist', 'rehabilitation center', 'physiotherapy', 'paralysis treatment'],
+    'eye':           ['eye specialist', 'ophthalmologist', 'eye hospital', 'vision clinic'],
+    'vision':        ['eye specialist', 'vision clinic', 'optometrist', 'lasik clinic'],
+    'cataract':      ['cataract surgery', 'eye hospital', 'cataract specialist', 'phaco surgery'],
+    'thyroid':       ['thyroid specialist', 'endocrinologist', 'thyroid clinic', 'hormone specialist'],
+    'ear_pain':      ['ent specialist', 'ear doctor', 'hearing clinic', 'ent hospital'],
+    'sinus':         ['sinus specialist', 'ent doctor', 'sinus clinic', 'nose specialist'],
+    'tonsil':        ['ent specialist', 'throat doctor', 'tonsil removal', 'ent hospital'],
+    'skin':          ['skin specialist', 'dermatologist', 'skin clinic', 'skin hospital'],
+    'allergy':       ['allergy clinic', 'allergy specialist', 'immunologist', 'skin allergy doctor'],
+    'rash':          ['skin specialist', 'dermatologist', 'rash treatment', 'skin clinic'],
+    'acne':          ['acne treatment', 'dermatologist', 'skin specialist', 'cosmetic clinic'],
+    'depression':    ['psychiatrist', 'depression treatment', 'mental health clinic', 'counseling center'],
+    'anxiety':       ['psychiatrist', 'anxiety treatment', 'mental health clinic', 'counseling center'],
+    'stress':        ['mental health clinic', 'stress management', 'psychiatrist', 'counseling'],
+    'insomnia':      ['sleep specialist', 'psychiatrist', 'sleep clinic', 'insomnia treatment'],
+    'diabetes':      ['diabetologist', 'diabetes clinic', 'diabetes hospital', 'sugar doctor'],
+    'obesity':       ['weight loss clinic', 'bariatric surgeon', 'obesity specialist', 'dietitian'],
+    'hormone':       ['endocrinologist', 'hormone specialist', 'thyroid clinic', 'hormone therapy'],
+    'cancer':        ['cancer hospital', 'oncologist', 'chemotherapy', 'tumor specialist'],
+    'tumor':         ['oncologist', 'cancer hospital', 'tumor surgeon', 'cancer specialist'],
+    'gynecologist':  ['gynecologist', 'women specialist', 'lady doctor', 'gynecology clinic'],
+    'gynecology':    ['gynecologist', 'women hospital', 'maternity hospital', 'gynecology clinic'],
+    'pregnancy':     ['maternity hospital', 'pregnancy care', 'obstetrician', 'delivery hospital'],
+    'maternity':     ['maternity hospital', 'pregnancy care', 'delivery hospital'],
+    'delivery':      ['maternity hospital', 'delivery hospital', 'obstetrician'],
+    'period':        ['gynecologist', 'women specialist', 'period problems', 'menstrual clinic'],
+    'menstrual':     ['gynecologist', 'menstrual disorder clinic', 'women specialist'],
+    'infertility':   ['ivf centre', 'fertility clinic', 'infertility specialist', 'reproductive medicine'],
+    'ivf':           ['ivf centre', 'fertility clinic', 'test tube baby', 'ivf specialist'],
+    'dental':        ['dental hospital', 'dentist', 'dental clinic', 'tooth doctor'],
+    'toothache':     ['dentist', 'dental clinic', 'tooth extraction', 'dental hospital'],
+    'teeth':         ['dentist', 'dental clinic', 'orthodontist', 'dental hospital'],
+    'child':         ['pediatrician', 'children hospital', 'child specialist', 'kids doctor'],
+    'baby':          ['pediatrician', 'child specialist', 'baby doctor', 'children hospital'],
+    'pediatric':     ['pediatrician', 'children hospital', 'child specialist'],
+    'prostate':      ['urologist', 'prostate specialist', 'prostate clinic'],
+    'bladder':       ['urologist', 'bladder specialist', 'urinary clinic'],
+    'stones':        ['kidney stone specialist', 'urolithiasis', 'stone clinic', 'lithotripsy'],
+    'appendix':      ['emergency hospital', 'general surgeon', 'appendix removal'],
+    'hernia':        ['hernia specialist', 'general surgeon', 'hernia repair', 'hernia clinic'],
+    'piles':         ['piles clinic', 'proctologist', 'fissure treatment', 'anal specialist'],
+    'fistula':       ['fistula specialist', 'proctologist', 'anal fistula treatment'],
+    'varicose':      ['vascular surgeon', 'varicose vein clinic', 'leg vein specialist'],
 }
 
 COMMON_ILLNESSES = {
@@ -526,6 +674,15 @@ COMMON_ILLNESSES = {
     'thyroid':       {'icon': '🦋', 'label': 'Thyroid'},
     'arthritis':     {'icon': '🦴', 'label': 'Arthritis'},
     'back_pain':     {'icon': '🔙', 'label': 'Back Pain'},
+    'gynecologist':  {'icon': '🤰', 'label': 'Gynecologist'},
+    'pregnancy':     {'icon': '🤰', 'label': 'Pregnancy'},
+    'dental':        {'icon': '🦷', 'label': 'Dental Problems'},
+    'child':         {'icon': '👶', 'label': 'Child Health'},
+    'infertility':   {'icon': '🧬', 'label': 'Infertility / IVF'},
+    'prostate':      {'icon': '🔬', 'label': 'Prostate Issues'},
+    'stones':        {'icon': '💎', 'label': 'Kidney Stones'},
+    'hernia':        {'icon': '🩹', 'label': 'Hernia'},
+    'piles':         {'icon': '💊', 'label': 'Piles / Fissure'},
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -550,8 +707,10 @@ def spec_score(name, address, sid):
     return sum(1 for kw in SPECIALTIES[sid]['keywords'] if kw in text)
 
 def classify(h, needed):
+    """Classify hospital into specialties. Score >= 1 means at least one
+    keyword matched (e.g. 'heart' in 'Heart Hospital')."""
     matched = [(s, spec_score(h['name'], h.get('address',''), s)) for s in needed]
-    return [m[0] for m in sorted(matched, key=lambda x: -x[1]) if m[1] > 0]
+    return [m[0] for m in sorted(matched, key=lambda x: -x[1]) if m[1] >= 1]
 
 def admin_required(f):
     @wraps(f)
@@ -671,7 +830,7 @@ def admin_delete_contact(cid):
 @admin_required
 def admin_view_contact(cid):
     contacts = db_get_contacts()
-    c = next((x for x in contacts if x.get('id') == cid), None)
+    c = next((x for x in contacts if str(x.get('id', '')) == str(cid)), None)
     if not c:
         return jsonify({'error': 'Not found'}), 404
     db_mark_read(cid)
@@ -714,26 +873,39 @@ def api_search_hospitals():
         user_lat     = float(data.get('lat', 0))
         user_lng     = float(data.get('lng', 0))
         radius       = int(data.get('radius', 5000))
-        limit        = int(data.get('limit', 30))
+        limit        = int(data.get('limit', 50))
         custom_query = data.get('custom_query','').lower().strip()
 
         if not user_lat or not user_lng:
             return jsonify({'error': 'Missing location'}), 400
 
-        # Determine specialties needed
+        # Determine what symptoms/condition the user searched for
+        disease_key = ''
         if custom_query:
             custom_diseases = db_get_diseases()
             m = next((d for d in custom_diseases if custom_query in d['name'].lower()), None)
             if m:
                 needed = [s.strip() for s in m['specialties'].split(',') if s.strip()]
                 label  = m['name']
+                disease_key = custom_query
             else:
-                best   = next((k for k in ILLNESS_SPECIALTIES if custom_query in k.replace('_',' ')), None)
-                needed = ILLNESS_SPECIALTIES.get(best, ['general'])
-                label  = custom_query.title()
+                best = next((k for k in ILLNESS_SPECIALTIES if custom_query in k.replace('_',' ')), None)
+                if best:
+                    needed = ILLNESS_SPECIALTIES[best]
+                    disease_key = best
+                else:
+                    matched_specs = []
+                    for sid, spec in SPECIALTIES.items():
+                        if sid == 'general':
+                            continue
+                        if any(kw in custom_query for kw in spec['keywords']):
+                            matched_specs.append(sid)
+                    needed = matched_specs if matched_specs else ['general']
+                label = custom_query.title()
         elif illness_type and illness_type in ILLNESS_SPECIALTIES:
             needed = ILLNESS_SPECIALTIES[illness_type]
             label  = COMMON_ILLNESSES.get(illness_type, {}).get('label', illness_type.title())
+            disease_key = illness_type
         elif body_part and body_part in BODY_PART_SPECIALTIES:
             needed = BODY_PART_SPECIALTIES[body_part]
             label  = body_part.title()
@@ -743,112 +915,165 @@ def api_search_hospitals():
 
         raw = []
 
-        # 1. Admin-added hospitals from MongoDB
+        # 1. Admin-added hospitals from DB (highest priority)
         for h in db_get_hospitals():
             if not (h.get('lat') and h.get('lng')):
                 continue
             dist = haversine(user_lat, user_lng, float(h['lat']), float(h['lng']))
             if dist <= radius / 1000:
                 raw.append({
-                    'name': h['name'],
-                    'address': ' '.join(filter(None, [h.get('address'), h.get('city'), h.get('state')])),
-                    'lat': float(h['lat']), 'lng': float(h['lng']),
-                    'distance': dist, 'type': 'Hospital',
-                    'place_id': f"db:{h.get('id','')}",
-                    'popularity': 10.0, 'display_rating': 4.8,
-                    'priority_rank': 3, 'source': 'database',
-                    'phone': h.get('phone','')
+                    'name':           h['name'],
+                    'address':        ' '.join(filter(None, [h.get('address'), h.get('city'), h.get('state')])),
+                    'lat':            float(h['lat']),
+                    'lng':            float(h['lng']),
+                    'distance':       dist,
+                    'type':           'Hospital',
+                    'place_id':       f"db:{h.get('id','')}",
+                    'popularity':     10.0,
+                    'display_rating': 4.8,
+                    'priority_rank':  3,
+                    'source':         'database',
+                    'phone':          h.get('phone','')
                 })
 
-        # 2. Google Maps Places (Text Search) — hospitals AND clinics
-        #    Always search generic hospital/clinic too for multispecialty coverage
-        search_keywords = set()
+        # 2. Google — ALL API calls run in PARALLEL for speed
+        #    Google treats radius as bias, not strict — so we send 1.5x
+        #    to get more results, haversine filter keeps actual radius only.
+        google_radius = int(radius * 1.5)
+        tasks = {}
+        for kw in ['hospital', 'clinic', 'medical centre', 'nursing home']:
+            tasks[f'text_{kw}'] = (google_nearby_places, user_lat, user_lng, google_radius, kw, 3)
+        for kw in ['hospital', 'clinic', 'doctor']:
+            tasks[f'nearby_{kw}'] = (google_nearby_search, user_lat, user_lng, google_radius, kw, 2)
+        specialty_kws = []
         for sid in needed:
-            for kw in SPECIALTY_SEARCH_KEYWORDS.get(sid, ['hospital']):
-                search_keywords.add(kw)
-        # Always add generic to catch multispecialty hospitals
-        search_keywords.update(['hospital', 'clinic'])
+            for kw in SPECIALTY_SEARCH_KEYWORDS.get(sid, []):
+                specialty_kws.append(kw)
+        for i, kw in enumerate(specialty_kws[:5]):
+            tasks[f'spec_{i}'] = (google_nearby_places, user_lat, user_lng, google_radius, kw, 2)
 
-        for keyword in search_keywords:
-            places = google_nearby_places(user_lat, user_lng, radius=radius, keyword=keyword)
-            raw.extend(places)
+        # Disease-specific direct searches
+        disease_kws = DISEASE_DIRECT_SEARCHES.get(disease_key, [])
+        if not disease_kws and custom_query:
+            disease_kws = [f'{custom_query} hospital', f'{custom_query} specialist', f'{custom_query} clinic']
+        for i, kw in enumerate(disease_kws[:3]):
+            tasks[f'disease_{i}'] = (google_nearby_places, user_lat, user_lng, google_radius, kw, 2)
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            futures = {}
+            for name, (fn, *args) in tasks.items():
+                futures[executor.submit(fn, *args)] = name
+            for future in as_completed(futures):
+                try:
+                    task_name = futures[future]
+                    results = future.result()
+                    # Tag disease-specific and specialty-specific results as relevant
+                    if task_name.startswith('disease_') or task_name.startswith('spec_'):
+                        for r in results:
+                            r['relevant'] = True
+                            r['priority_rank'] = max(r.get('priority_rank', 0), 1)
+                    raw.extend(results)
+                except Exception as e:
+                    print(f"[Parallel] Task {futures[future]} failed: {e}")
 
-        # 3. Deduplicate by name (first 35 chars)
-        seen    = set()
+        # 4. Deduplicate map results
+        seen_ids = set()
+        seen_names = set()
         deduped = []
+        max_dist_km = radius / 1000
         for h in sorted(raw, key=lambda x: (-x.get('priority_rank', 0), x['distance'])):
-            uid = h['name'].strip().lower()[:35]
-            if uid in seen:
+            if h.get('distance', 999) > max_dist_km:
                 continue
-            seen.add(uid)
+            pid = h.get('place_id', '')
+            name_key = h['name'].strip().lower()[:40]
+            loc_key = f"{h.get('lat',0):.5f},{h.get('lng',0):.5f}"
+            if pid and pid in seen_ids:
+                continue
+            combined_key = f"{name_key}|{loc_key}"
+            if combined_key in seen_names:
+                continue
+            if pid:
+                seen_ids.add(pid)
+            seen_names.add(combined_key)
             deduped.append(h)
 
-        # 4. Sort: verified first, then multispecialty, then clinics, then nearest
-        def sort_key(h):
-            is_multi  = 1 if is_multispecialty(h['name'], h.get('address','')) else 0
-            is_clinic = 1 if h.get('type') == 'Clinic' else 0
-            return (-h.get('priority_rank', 0), -is_multi, -is_clinic, h['distance'])
-        deduped.sort(key=sort_key)
-
-        # 5. Classify into buckets
-        spec_buckets = {s: [] for s in needed}
-        multi_bucket = []
-        unmatched    = []
-
+        # 5. Tag each hospital with relevance to the user's search
         for h in deduped:
-            matched = classify(h, needed)
-            if matched:
-                # Specialty-matched hospital → goes into specialty bucket
-                h['specialty_label'] = SPECIALTIES.get(matched[0],{}).get('label', matched[0])
-                spec_buckets[matched[0]].append(h)
-            elif is_multispecialty(h['name'], h.get('address','')):
-                # Multispecialty hospital (Apollo, Zydus etc.) → relevant for any search
-                h['specialty_label'] = '⭐ Multispecialty'
-                multi_bucket.append(h)
+            # Don't overwrite relevant=True already set by disease/specialty searches
+            if h.get('relevant'):
+                matched = classify(h, needed)
+                if matched:
+                    h['specialty_label'] = SPECIALTIES.get(matched[0],{}).get('label', matched[0])
+                else:
+                    h['specialty_label'] = SPECIALTIES.get(needed[0],{}).get('label', needed[0]) if needed else ''
             else:
-                # Generic clinic/hospital — show at bottom as "Also Nearby"
-                h['specialty_label'] = '🏥 General'
-                unmatched.append(h)
+                matched = classify(h, needed)
+                if matched:
+                    h['relevant'] = True
+                    h['specialty_label'] = SPECIALTIES.get(matched[0],{}).get('label', matched[0])
+                else:
+                    h['relevant'] = False
+                    h['specialty_label'] = ''
 
-        # 6. Build groups in order:
-        #    1. Specialty-specific (e.g. Orthopedic Hospitals)
-        #    2. Multispecialty (Apollo, Zydus — treat all conditions)
-        #    3. All other hospitals nearby (at bottom, optional)
+        # 5. Sort — hospitals first, then clinics
+        hospitals = [h for h in deduped if h.get('type') == 'Hospital']
+        clinics   = [h for h in deduped if h.get('type') != 'Hospital']
+
+        def hospital_sort(h):
+            return (-h.get('priority_rank', 0),
+                    -h.get('display_rating', 0),
+                    -1 if h.get('relevant') else 0,
+                    h['distance'])
+        def clinic_sort(h):
+            return (-h.get('priority_rank', 0),
+                    -h.get('display_rating', 0),
+                    -1 if h.get('relevant') else 0,
+                    h['distance'])
+
+        hospitals.sort(key=hospital_sort)
+        clinics.sort(key=clinic_sort)
+
+        # 6. Build groups — ONLY relevant + multispecialty hospitals
         groups = []
-        for sid in needed:
-            if spec_buckets.get(sid):
-                sp = SPECIALTIES.get(sid, {})
-                groups.append({
-                    'id': sid,
-                    'label': sp.get('label', sid.title()),
-                    'icon': sp.get('icon', '🏥'),
-                    'hospitals': spec_buckets[sid]
-                })
-        if multi_bucket:
+
+        # Relevant hospitals matching the search
+        relevant_hospitals = [h for h in hospitals if h.get('relevant')]
+        if relevant_hospitals:
+            sp = SPECIALTIES.get(needed[0], {}) if needed else {}
+            groups.append({
+                'id': 'relevant_hospitals',
+                'label': f'🏥 {label} — Matching Hospitals',
+                'icon': sp.get('icon', '🏥'),
+                'hospitals': relevant_hospitals
+            })
+
+        # Multispecialty hospitals (Apollo, Zydus etc.) — can handle any condition
+        multi_hospitals = [h for h in hospitals if not h.get('relevant') and is_multispecialty(h['name'], h.get('address',''))]
+        if multi_hospitals:
             groups.append({
                 'id': 'multispecialty',
                 'label': '⭐ Multispecialty Hospitals',
                 'icon': '⭐',
-                'hospitals': multi_bucket
+                'hospitals': multi_hospitals
             })
-        # Only show "Also Nearby" if the primary groups have results
-        if unmatched and groups:
+
+        # Only show relevant clinics
+        relevant_clinics = [c for c in clinics if c.get('relevant')]
+        if relevant_clinics:
             groups.append({
-                'id': 'nearby',
-                'label': '🏥 Other Hospitals & Clinics Nearby',
-                'icon': '🏥',
-                'hospitals': unmatched[:15]   # cap at 15
+                'id': 'relevant_clinics',
+                'label': '🩺 Matching Clinics',
+                'icon': '🩺',
+                'hospitals': relevant_clinics
             })
-        # Fallback if nothing classified at all
+
         if not groups and deduped:
             groups.append({
                 'id': 'general',
-                'label': f'🏥 Hospitals & Clinics near you',
+                'label': '🏥 Hospitals & Clinics near you',
                 'icon': '🏥',
-                'hospitals': deduped[:30]
+                'hospitals': deduped
             })
 
-        # Trim each group but always show at least some from each
         trimmed = []
         for g in groups:
             hs = g['hospitals'][:limit]
@@ -858,7 +1083,7 @@ def api_search_hospitals():
         return jsonify({'success': True, 'groups': trimmed,
             'total': sum(len(g['hospitals']) for g in trimmed),
             'search_label': label, 'radius_km': radius/1000,
-            'sort_by': 'distance'})
+            'sort_by': 'rating'})
 
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -926,6 +1151,90 @@ def api_status():
         'mongo':                MONGO_OK,
         'google_maps_key_set':  bool(GOOGLE_MAPS_KEY),
     })
+
+
+@app.route('/api/suggest', methods=['POST'])
+def api_suggest():
+    """Return hospital/clinic name suggestions as user types.
+    Combines disease list with Google Places for hospital names."""
+    try:
+        data    = request.get_json() or {}
+        q       = data.get('q', '').strip().lower()
+        lat     = float(data.get('lat', 0) or 0)
+        lng     = float(data.get('lng', 0) or 0)
+        radius  = int(data.get('radius', 10000))
+        if not q or len(q) < 2:
+            return jsonify({'suggestions': []})
+
+        suggestions = []
+
+        # 1. Disease/condition matches
+        all_diseases = [{'key': k, 'label': v['label'], 'icon': v['icon'], 'type': 'condition'}
+                        for k, v in COMMON_ILLNESSES.items()]
+        for d in db_get_diseases():
+            all_diseases.append({'key': d['name'].lower().replace(' ','_'),
+                                 'label': d['name'], 'icon': d.get('icon','💊'), 'type': 'condition'})
+
+        def _rank(label):
+            ll = label.lower()
+            if ll.startswith(q):         return 0
+            words = ll.split()
+            if any(w.startswith(q) for w in words): return 1
+            if q in ll:                  return 2
+            return 3
+
+        disease_matches = sorted(
+            [d for d in all_diseases if _rank(d['label']) < 3],
+            key=lambda d: _rank(d['label'])
+        )[:5]
+        for d in disease_matches:
+            suggestions.append({
+                'text':  d['label'],
+                'icon':  d['icon'],
+                'type':  'condition',
+                'key':   d['key'],
+            })
+
+        # 2. Google Places for hospital names near location
+        if lat and lng and GOOGLE_MAPS_KEY:
+            try:
+                resp = requests.get(
+                    'https://maps.googleapis.com/maps/api/place/textsearch/json',
+                    params={
+                        'query':    f'{q} hospital clinic',
+                        'location': f'{lat},{lng}',
+                        'radius':   min(radius, 50000),
+                        'key':      GOOGLE_MAPS_KEY,
+                    },
+                    timeout=8
+                )
+                pdata = resp.json()
+                if pdata.get('status') == 'OK':
+                    for place in pdata.get('results', [])[:8]:
+                        name = place.get('name', '')
+                        addr = place.get('formatted_address', place.get('vicinity', ''))
+                        loc  = place.get('geometry', {}).get('location', {})
+                        dist = haversine(lat, lng, loc.get('lat',0), loc.get('lng',0)) if lat and lng else 0
+                        rating = float(place.get('rating', 0) or 0)
+                        place_types = set(place.get('types', []))
+                        if place_types & _BLOCKED_TYPES:
+                            continue
+                        suggestions.append({
+                            'text':     name,
+                            'subtext':  addr,
+                            'icon':     '🏥',
+                            'type':     'hospital',
+                            'rating':   rating,
+                            'distance': round(dist, 1),
+                            'lat':      loc.get('lat', 0),
+                            'lng':      loc.get('lng', 0),
+                        })
+            except Exception as e:
+                print(f"[Suggest] Google error: {e}")
+
+        return jsonify({'suggestions': suggestions[:12]})
+    except Exception as e:
+        return jsonify({'suggestions': [], 'error': str(e)})
 
 
 # ══════════════════════════════════════════════════════════════════════════

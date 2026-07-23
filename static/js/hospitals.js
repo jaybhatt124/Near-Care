@@ -15,20 +15,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ── Show "View All on Google Maps" button after results load ──
-function showMap(hospitals) {
+function showMap(hospitals, searchLabel) {
   const btn       = document.getElementById('viewOnMapBtn');
   const container = document.getElementById('mapBtnContainer');
   if (!btn || !container || !hospitals.length) return;
 
-  // Build a Google Maps search URL with all hospital names near user location
   let url;
   if (hospitals.length === 1) {
     url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(hospitals[0].name)}&query_place_id=${hospitals[0].place_id || ''}`;
   } else {
-    // Open Google Maps centered on user location searching for hospitals
-    const query = encodeURIComponent('hospitals near me');
+    const query = encodeURIComponent((searchLabel || 'hospitals') + ' near me');
     url = userLat && userLng
-      ? `https://www.google.com/maps/search/hospitals/@${userLat},${userLng},14z`
+      ? `https://www.google.com/maps/search/${query}/${userLat},${userLng},14z`
       : `https://www.google.com/maps/search/${query}`;
   }
 
@@ -273,21 +271,29 @@ function markPill(key) {
   });
 }
 
+let _suggestTimer = null;
+
 function initSearchBar() {
   const inp  = document.getElementById('diseaseSearch');
   const sugg = document.getElementById('searchSuggestions');
   if (!inp) return;
 
   inp.addEventListener('input', () => {
-    const q = inp.value.trim().toLowerCase();
+    const q = inp.value.trim();
     if (q.length < 2) { sugg.style.display = 'none'; return; }
-    const matches = allDiseases.filter(d => d.label.toLowerCase().includes(q)).slice(0, 8);
-    if (!matches.length) { sugg.style.display = 'none'; return; }
-    sugg.innerHTML = matches.map(d =>
-      `<div class="suggestion-item" onclick="pickSuggestion('${d.key}','${d.label.replace(/'/g,"\\'")}')">
-        <span>${d.icon}</span> ${d.label}
-      </div>`).join('');
-    sugg.style.display = 'block';
+
+    // Local disease matches (instant)
+    const lq = q.toLowerCase();
+    const localMatches = allDiseases.filter(d => d.label.toLowerCase().includes(lq)).slice(0, 4);
+
+    // Debounced Google hospital suggestions
+    clearTimeout(_suggestTimer);
+    _suggestTimer = setTimeout(() => fetchSuggestions(q, localMatches, sugg), 250);
+
+    // Show local matches immediately while waiting for Google
+    if (localMatches.length) {
+      renderLocalSuggestions(localMatches, sugg);
+    }
   });
   inp.addEventListener('keydown', e => {
     if (e.key === 'Enter') { triggerSearch(); sugg.style.display = 'none'; }
@@ -295,6 +301,102 @@ function initSearchBar() {
   document.addEventListener('click', e => {
     if (!e.target.closest('.search-input-wrapper')) sugg.style.display = 'none';
   });
+}
+
+function renderLocalSuggestions(matches, sugg) {
+  sugg.innerHTML = matches.map(d =>
+    `<div class="suggestion-item" onclick="pickSuggestion('${d.key}','${d.label.replace(/'/g,"\\'")}')">
+      <span>${d.icon}</span> ${d.label}
+      <span style="margin-left:auto;font-size:11px;color:#9ca3af;">condition</span>
+    </div>`
+  ).join('');
+  sugg.style.display = 'block';
+}
+
+async function fetchSuggestions(q, localMatches, sugg) {
+  try {
+    const res  = await fetch('/api/suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        q,
+        lat: userLat || 0,
+        lng: userLng || 0,
+        radius: parseInt(document.getElementById('radiusSelect')?.value || 10000)
+      })
+    });
+    const data = await res.json();
+    if (!data.suggestions?.length && !localMatches.length) {
+      sugg.style.display = 'none';
+      return;
+    }
+
+    let html = '';
+
+    // Condition matches
+    const conditions = (data.suggestions || []).filter(s => s.type === 'condition');
+    const hospitals  = (data.suggestions || []).filter(s => s.type === 'hospital');
+
+    // Merge local + API conditions (dedup by key)
+    const seenKeys = new Set();
+    const allConditions = [...(localMatches || []), ...conditions].filter(d => {
+      if (seenKeys.has(d.key || d.text)) return false;
+      seenKeys.add(d.key || d.text);
+      return true;
+    });
+
+    if (allConditions.length) {
+      html += `<div style="padding:6px 14px;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Conditions</div>`;
+      html += allConditions.slice(0, 5).map(d => {
+        const key   = d.key || '';
+        const label = d.label || d.text;
+        const icon  = d.icon  || '💊';
+        return `<div class="suggestion-item" onclick="pickSuggestion('${key}','${label.replace(/'/g,"\\'")}')">
+          <span>${icon}</span> ${label}
+        </div>`;
+      }).join('');
+    }
+
+    if (hospitals.length) {
+      html += `<div style="padding:6px 14px;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;border-top:1px solid #f1f5f9;">Hospitals Nearby</div>`;
+      html += hospitals.slice(0, 6).map(h => {
+        const rating = h.rating ? `⭐${h.rating}` : '';
+        const dist   = h.distance ? `${h.distance}km` : '';
+        const sub    = [rating, dist].filter(Boolean).join(' · ');
+        return `<div class="suggestion-item" onclick="pickHospital('${h.lat}','${h.lng}','${h.text.replace(/'/g,"\\'")}')">
+          <span>🏥</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${h.text}</div>
+            ${h.subtext ? `<div style="font-size:11px;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${h.subtext}</div>` : ''}
+          </div>
+          <span style="font-size:11px;color:#9ca3af;white-space:nowrap;">${sub}</span>
+        </div>`;
+      }).join('');
+    }
+
+    if (html) {
+      sugg.innerHTML = html;
+      sugg.style.display = 'block';
+    } else {
+      sugg.style.display = 'none';
+    }
+  } catch (e) {
+    // On error, keep showing local matches only
+    if (!localMatches.length) sugg.style.display = 'none';
+  }
+}
+
+function pickHospital(lat, lng, name) {
+  document.getElementById('diseaseSearch').value = name;
+  document.getElementById('searchSuggestions').style.display = 'none';
+  selectedIllness = null;
+  selectedBodyPart = null;
+  // Navigate directly to this hospital's location
+  if (lat && lng) {
+    userLat = parseFloat(lat);
+    userLng = parseFloat(lng);
+    doSearch({ custom_query: name.toLowerCase() });
+  }
 }
 
 function pickSuggestion(key, label) {
@@ -353,7 +455,7 @@ async function doSearch({ illness_type, body_part, custom_query, radius }) {
         illness_type: illness_type || '',
         body_part:    body_part    || '',
         custom_query: custom_query || '',
-        limit: 40
+        limit: 50
       })
     });
     const data = await res.json();
@@ -387,7 +489,7 @@ function renderResults(data) {
 
   // Show map with all hospitals placed as markers
   const allH = data.groups.flatMap(g => g.hospitals);
-  showMap(allH);
+  showMap(allH, data.search_label);
 
   showResults(data.groups.map(g => `
     <div style="margin-bottom:32px;">
@@ -401,15 +503,15 @@ function renderResults(data) {
 }
 
 function hospitalCard(h) {
-  // clicking card opens directions in Google Maps
   const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${h.lat},${h.lng}`;
   const mapsQ   = encodeURIComponent(h.name + ' ' + (h.address || ''));
   const srcChip = h.source === 'database' ? `<span class="meta-chip source-db">✅ Verified</span>` : '';
   const rating  = h.display_rating > 0 ? `<span class="meta-chip">⭐ ${h.display_rating}</span>` : '';
+  const specChip = h.specialty_label ? `<span class="meta-chip">${h.specialty_label}</span>` : '';
 
-  return `<div class="hospital-card" onclick="focusOnMap(${h.lat},${h.lng},'${h.name.replace(/'/g,"\\'")}','${(h.address||'').replace(/'/g,"\\'")}',${h.distance||0},'${h.phone||''}')">
+  return `<div class="hospital-card" onclick="focusOnMap(${h.lat},${h.lng})">
     <div class="hospital-top">
-      <div class="hospital-avatar">🏥</div>
+      <div class="hospital-avatar">${h.type === 'Clinic' ? '🩺' : '🏥'}</div>
       <div class="hospital-info">
         <div class="hospital-name">${h.name}</div>
         <div class="hospital-address">${h.address || 'Address not available'}</div>
@@ -418,14 +520,12 @@ function hospitalCard(h) {
     <div class="hospital-meta">
       <span class="meta-chip distance">📍 ${h.distance} km</span>
       <span class="meta-chip">${h.type || 'Hospital'}</span>
-      ${rating}${srcChip}
+      ${rating}${srcChip}${specChip}
       ${h.phone ? `<span class="meta-chip">📞 ${h.phone}</span>` : ''}
-      <span class="meta-chip">${h.specialty_label || ''}</span>
     </div>
     <div class="hospital-actions" onclick="event.stopPropagation()">
       <a href="${mapsUrl}" target="_blank" class="btn btn-primary btn-sm">🗺️ Directions</a>
       <a href="https://www.google.com/maps/search/?api=1&query=${mapsQ}" target="_blank" class="btn btn-secondary btn-sm">📌 Map</a>
-      ${h.phone ? `<a href="tel:${h.phone}" class="btn btn-secondary btn-sm">📞 Call</a>` : ''}
     </div>
   </div>`;
 }

@@ -328,22 +328,25 @@ function navigateTo(searchType, searchValue, displayName, lat, lng) {
 }
 
 // ── Search bar ────────────────────────────────────────────────
+let _homeSuggestTimer = null;
+
 function initSearchBar() {
   const inp  = document.getElementById('diseaseSearch');
   const sugg = document.getElementById('searchSuggestions');
   if (!inp) return;
 
   inp.addEventListener('input', () => {
-    const q = inp.value.trim().toLowerCase();
+    const q = inp.value.trim();
     if (q.length < 2) { sugg.style.display = 'none'; return; }
-    const matches = allDiseases.filter(d => d.label.toLowerCase().includes(q)).slice(0, 8);
-    if (!matches.length) { sugg.style.display = 'none'; return; }
-    sugg.innerHTML = matches.map(d =>
-      `<div class="suggestion-item" onclick="pickSuggestion('${d.key}','${d.label.replace(/'/g,"\\'")}')">
-        <span>${d.icon}</span> ${d.label}
-      </div>`
-    ).join('');
-    sugg.style.display = 'block';
+    const lq = q.toLowerCase();
+    const localMatches = allDiseases.filter(d => d.label.toLowerCase().includes(lq)).slice(0, 4);
+
+    clearTimeout(_homeSuggestTimer);
+    _homeSuggestTimer = setTimeout(() => fetchHomeSuggestions(q, localMatches, sugg), 250);
+
+    if (localMatches.length) {
+      renderHomeLocalSuggestions(localMatches, sugg);
+    }
   });
 
   inp.addEventListener('keydown', e => {
@@ -353,6 +356,50 @@ function initSearchBar() {
   document.addEventListener('click', e => {
     if (!e.target.closest('.search-input-wrapper')) sugg.style.display = 'none';
   });
+}
+
+function renderHomeLocalSuggestions(matches, sugg) {
+  sugg.innerHTML = matches.map(d =>
+    `<div class="suggestion-item" onclick="pickSuggestion('${d.key}','${d.label.replace(/'/g,"\\'")}')">
+      <span>${d.icon}</span> ${d.label}
+      <span style="margin-left:auto;font-size:11px;color:#9ca3af;">condition</span>
+    </div>`
+  ).join('');
+  sugg.style.display = 'block';
+}
+
+async function fetchHomeSuggestions(q, localMatches, sugg) {
+  try {
+    const res  = await fetch('/api/suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q, lat: 0, lng: 0, radius: 10000 })
+    });
+    const data = await res.json();
+    const apiConditions = (data.suggestions || []).filter(s => s.type === 'condition');
+
+    const seenKeys = new Set();
+    const allConditions = [...(localMatches || []), ...apiConditions].filter(d => {
+      const k = d.key || d.text;
+      if (seenKeys.has(k)) return false;
+      seenKeys.add(k);
+      return true;
+    });
+
+    if (!allConditions.length) { sugg.style.display = 'none'; return; }
+
+    sugg.innerHTML = allConditions.slice(0, 8).map(d => {
+      const key   = d.key || '';
+      const label = d.label || d.text;
+      const icon  = d.icon  || '💊';
+      return `<div class="suggestion-item" onclick="pickSuggestion('${key}','${label.replace(/'/g,"\\'")}')">
+        <span>${icon}</span> ${label}
+      </div>`;
+    }).join('');
+    sugg.style.display = 'block';
+  } catch (e) {
+    if (!localMatches.length) sugg.style.display = 'none';
+  }
 }
 
 function pickSuggestion(key, label) {
