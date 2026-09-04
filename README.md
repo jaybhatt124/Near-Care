@@ -24,7 +24,7 @@ NearCares is a GPS-powered web app that helps users find nearby specialist hospi
 | Layer | Technology |
 |-------|-----------|
 | Backend | Python 3, Flask |
-| Database | MySQL (JSON file fallback) |
+| Database | MongoDB (JSON file fallback) |
 | Location API | Google Maps (primary), Mappls (fallback) |
 | Frontend | HTML, CSS, Vanilla JavaScript |
 | Auth | Flask Sessions |
